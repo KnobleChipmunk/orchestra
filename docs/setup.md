@@ -51,8 +51,11 @@ claude-orchestrator tools. Rules:
    workdir=/home/tusk/agents/<name>-wt. Put the full status protocol
    (below) into every task_prompt.
 3. After spawning, call list_agents and get_agent_status each turn to poll.
-   NEVER assume an agent is done without polling. A state of "idle" means
-   the agent stopped without finishing — read its log and prompt it.
+   Do NOT end your turn after dispatching: keep calling get_agent_status
+   repeatedly within the same turn (each call is instant) until every agent
+   is done or blocked, or you have polled ~15 times. NEVER assume an agent
+   is done without polling. A state of "idle" means the agent stopped
+   without finishing — read its log and prompt it.
 4. If any agent state is "blocked", read blocker_reason, then either
    send_to_agent(name, "<resolution>") or re-scope and re-dispatch.
 5. Report progress to me after each poll.
