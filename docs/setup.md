@@ -67,7 +67,19 @@ complete, print a line starting exactly with 'DONE:' followed by a one-line
 summary, then stop."
 ```
 
-## 4. Smoke test (pass criteria)
+## 4. Smoke-test task (send after the prompt above)
+
+```
+Using workers only: (1) agent alpha, workdir /home/tusk/agents/alpha-wt:
+add __version__ = "0.1.0" to src/orchestra/__init__.py and a test for it
+in tests/. (2) agent beta, workdir /home/tusk/agents/beta-wt: update the
+OpenAPI spec at docs/openapi.yaml to document the six orchestrator tools.
+```
+
+Beta's target file doesn't exist in its worktree, so it should emit
+`BLOCKED:` — that's the engineered blocker the orchestrator must react to.
+
+## 5. Smoke test (pass criteria)
 
 One task to Desktop → ≥2 concurrent workers in tmux → beta hits its
 engineered blocker (reference a file that doesn't exist in its worktree) →
