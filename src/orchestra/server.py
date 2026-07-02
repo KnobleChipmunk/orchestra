@@ -13,6 +13,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,8 +31,14 @@ CLAUDE_JSON = Path.home() / ".claude.json"
 # States in which a second spawn_agent for the same name is a mistake.
 ACTIVE_STATES = {"starting", "working", "blocked", "idle"}
 
-# Seam for tests: faked so no test ever spawns tmux or claude.
+# Seams for tests: faked so no test ever spawns tmux, claude, or sleeps.
 RUN = subprocess.run
+SLEEP = time.sleep
+
+# The Claude Code TUI's paste detection swallows an Enter sent in the same
+# burst as text, leaving the message typed but unsubmitted — always send
+# Enter as a separate keystroke after this pause.
+SUBMIT_DELAY_S = 1
 
 mcp = FastMCP("claude-orchestrator")
 
@@ -139,7 +146,9 @@ def spawn_agent(name: str, task_prompt: str, workdir: str) -> str:
     )
     deliver = (
         f"sleep {STARTUP_DELAY_S} && "
-        f"tmux send-keys -t {shlex.quote(target)} {shlex.quote(kickoff)} Enter"
+        f"tmux send-keys -t {shlex.quote(target)} {shlex.quote(kickoff)} && "
+        f"sleep {SUBMIT_DELAY_S} && "
+        f"tmux send-keys -t {shlex.quote(target)} Enter"
     )
     RUN(["tmux", "run-shell", "-b", deliver], check=True)
 
@@ -163,7 +172,10 @@ def send_to_agent(name: str, message: str) -> str:
     notify = " ".join(message.split()) or f"New message in {d / 'inbox.md'}"
     if len(notify) > 200 or "\n" in message:
         notify = f"New orchestrator message — read {d / 'inbox.md'} and act on it."
-    RUN(["tmux", "send-keys", "-t", f"{TMUX_SESSION}:{name}", notify, "Enter"])
+    target = f"{TMUX_SESSION}:{name}"
+    RUN(["tmux", "send-keys", "-t", target, notify])
+    SLEEP(SUBMIT_DELAY_S)
+    RUN(["tmux", "send-keys", "-t", target, "Enter"])
     return f"Delivered to '{name}'."
 
 

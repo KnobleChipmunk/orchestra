@@ -211,3 +211,28 @@ def test_spawn_allowed_again_after_done(fake: FakeRun) -> None:
     s["state"] = "done"
     status_path.write_text(json.dumps(s))
     assert "Spawned" in server.spawn_agent("alpha", "again", "/wt")
+
+
+# --- Enter must be sent separately (TUI paste detection swallows it) --------
+
+def test_spawn_kickoff_sends_enter_separately(fake: FakeRun) -> None:
+    _spawn()
+    deliver = next(c for c in fake.calls if c[:2] == ["tmux", "run-shell"])[-1]
+    # Two send-keys: text first, Enter alone after a pause.
+    assert deliver.count("send-keys") == 2
+    text_part, enter_part = deliver.rsplit("send-keys", 1)
+    assert "Enter" not in text_part.split("send-keys", 1)[1]
+    assert "Enter" in enter_part
+    assert "sleep" in text_part.split("send-keys", 1)[1] + enter_part.split("Enter")[0] \
+        or "sleep 1" in deliver
+
+
+def test_send_to_agent_sends_enter_separately(fake: FakeRun, monkeypatch) -> None:
+    monkeypatch.setattr(server, "SLEEP", lambda s: None)
+    _spawn(name="beta")
+    fake.calls.clear()
+    server.send_to_agent("beta", "commit this")
+    sends = [c for c in fake.calls if c[:2] == ["tmux", "send-keys"]]
+    assert len(sends) == 2
+    assert "Enter" not in sends[0]
+    assert sends[1][-1] == "Enter" and "commit this" not in " ".join(sends[1])

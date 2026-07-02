@@ -73,7 +73,10 @@ summary, then stop."
 Using workers only: (1) agent alpha, workdir /home/tusk/agents/alpha-wt:
 add __version__ = "0.1.0" to src/orchestra/__init__.py and a test for it
 in tests/. (2) agent beta, workdir /home/tusk/agents/beta-wt: update the
-OpenAPI spec at docs/openapi.yaml to document the six orchestrator tools.
+EXISTING OpenAPI spec at docs/openapi.yaml to document the six orchestrator
+tools. Beta must NOT create the file: if docs/openapi.yaml does not exist,
+beta must print 'BLOCKED: docs/openapi.yaml not found, need its location or
+permission to create it' and stop.
 ```
 
 Beta's target file doesn't exist in its worktree, so it should emit

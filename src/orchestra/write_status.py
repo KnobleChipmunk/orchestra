@@ -37,6 +37,30 @@ def _sentinel_after(tail: str, sentinel: str) -> str | None:
     return (after.splitlines()[0][:REASON_MAX] if after else "unspecified") or "unspecified"
 
 
+def _assistant_text(raw: str, max_chars: int = TAIL_BYTES) -> str:
+    """Concatenate text blocks of assistant messages from a JSONL transcript,
+    in order, keeping the last max_chars. Returns "" if no assistant text is
+    found (e.g. the transcript is not JSONL)."""
+    texts: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = entry.get("message", {}).get("content", [])
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts.extend(b.get("text", "") for b in content
+                         if isinstance(b, dict) and b.get("type") == "text")
+    return "\n".join(t for t in texts if t)[-max_chars:]
+
+
 def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
     """Compute and write status.json for one hook event; returns the status."""
     hook = event.get("hook_event_name", "")
@@ -44,7 +68,12 @@ def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
     tail = ""
     transcript = event.get("transcript_path")
     if transcript and Path(transcript).exists():
-        tail = Path(transcript).read_text()[-TAIL_BYTES:]
+        raw = Path(transcript).read_text()
+        # Real transcripts are JSONL where one trailing tool-result line can
+        # exceed any raw byte tail — scan assistant message text instead, and
+        # only fall back to a raw tail for non-JSONL content (tests, future
+        # format changes).
+        tail = _assistant_text(raw) or raw[-TAIL_BYTES:]
 
     blocked_pos = tail.rfind("BLOCKED:")
     done_pos = tail.rfind("DONE:")
