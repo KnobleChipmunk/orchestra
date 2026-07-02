@@ -116,3 +116,25 @@ def test_jsonl_latest_assistant_sentinel_wins(tmp_path: Path) -> None:
     p.write_text(msg("BLOCKED: missing file") + "\n" + msg("DONE: resolved and finished") + "\n")
     handle_event("beta", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
     assert json.loads((tmp_path / "beta" / "status.json").read_text())["state"] == "done"
+
+
+def test_stop_retries_read_when_final_message_not_yet_flushed(tmp_path: Path, monkeypatch) -> None:
+    # Race seen live: at Stop-hook time the transcript existed but the final
+    # assistant message (with the sentinel) had not been flushed yet. The
+    # handler must re-read briefly before concluding "idle".
+    from orchestra import write_status
+
+    p = tmp_path / "transcript.jsonl"
+    p.write_text(json.dumps({"type": "assistant",
+                             "message": {"content": [{"type": "text", "text": "working..."}]}}) + "\n")
+
+    def late_flush(_seconds: float) -> None:
+        p.write_text(p.read_text() + json.dumps(
+            {"type": "assistant",
+             "message": {"content": [{"type": "text", "text": "BLOCKED: file missing"}]}}) + "\n")
+
+    monkeypatch.setattr(write_status, "SLEEP", late_flush)
+    handle_event("beta", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "beta" / "status.json").read_text())
+    assert status["state"] == "blocked"
+    assert status["blocker_reason"] == "file missing"

@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,12 @@ logger = logging.getLogger("orchestra.write_status")
 DEFAULT_AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
 TAIL_BYTES = 4000
 REASON_MAX = 300
+# On Stop, the final assistant message may not be flushed to the transcript
+# yet (observed live: transcript and hook ran in the same second, sentinel
+# missing). Re-read a few times before concluding "no sentinel".
+FLUSH_RETRIES = 3
+FLUSH_WAIT_S = 0.5
+SLEEP = time.sleep  # seam for tests
 
 
 def _sentinel_after(tail: str, sentinel: str) -> str | None:
@@ -65,15 +72,24 @@ def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
     """Compute and write status.json for one hook event; returns the status."""
     hook = event.get("hook_event_name", "")
 
-    tail = ""
-    transcript = event.get("transcript_path")
-    if transcript and Path(transcript).exists():
+    def read_tail() -> str:
+        transcript = event.get("transcript_path")
+        if not (transcript and Path(transcript).exists()):
+            return ""
         raw = Path(transcript).read_text()
         # Real transcripts are JSONL where one trailing tool-result line can
         # exceed any raw byte tail — scan assistant message text instead, and
         # only fall back to a raw tail for non-JSONL content (tests, future
         # format changes).
-        tail = _assistant_text(raw) or raw[-TAIL_BYTES:]
+        return _assistant_text(raw) or raw[-TAIL_BYTES:]
+
+    tail = read_tail()
+    if hook == "Stop":
+        for _ in range(FLUSH_RETRIES):
+            if "BLOCKED:" in tail or "DONE:" in tail:
+                break
+            SLEEP(FLUSH_WAIT_S)
+            tail = read_tail()
 
     blocked_pos = tail.rfind("BLOCKED:")
     done_pos = tail.rfind("DONE:")
