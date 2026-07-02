@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,12 @@ logger = logging.getLogger("orchestra.write_status")
 DEFAULT_AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
 TAIL_BYTES = 4000
 REASON_MAX = 300
+# On Stop, the final assistant message may not be flushed to the transcript
+# yet (observed live: transcript and hook ran in the same second, sentinel
+# missing). Re-read a few times before concluding "no sentinel".
+FLUSH_RETRIES = 3
+FLUSH_WAIT_S = 0.5
+SLEEP = time.sleep  # seam for tests
 
 
 def _sentinel_after(tail: str, sentinel: str) -> str | None:
@@ -37,14 +44,56 @@ def _sentinel_after(tail: str, sentinel: str) -> str | None:
     return (after.splitlines()[0][:REASON_MAX] if after else "unspecified") or "unspecified"
 
 
+def _assistant_text(raw: str, max_chars: int = TAIL_BYTES) -> str:
+    """Concatenate text blocks of assistant messages from a JSONL transcript,
+    in order, keeping the last max_chars. Returns "" if no assistant text is
+    found (e.g. the transcript is not JSONL)."""
+    texts: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = entry.get("message", {}).get("content", [])
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts.extend(b.get("text", "") for b in content
+                         if isinstance(b, dict) and b.get("type") == "text")
+    return "\n".join(t for t in texts if t)[-max_chars:]
+
+
 def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
     """Compute and write status.json for one hook event; returns the status."""
     hook = event.get("hook_event_name", "")
 
-    tail = ""
-    transcript = event.get("transcript_path")
-    if transcript and Path(transcript).exists():
-        tail = Path(transcript).read_text()[-TAIL_BYTES:]
+    def read_tail() -> str:
+        transcript = event.get("transcript_path")
+        if not (transcript and Path(transcript).exists()):
+            return ""
+        raw = Path(transcript).read_text()
+        # Real transcripts are JSONL where one trailing tool-result line can
+        # exceed any raw byte tail — scan assistant message text instead, and
+        # only fall back to a raw tail for non-JSONL content (tests, future
+        # format changes).
+        return _assistant_text(raw) or raw[-TAIL_BYTES:]
+
+    tail = read_tail()
+    if hook == "Stop":
+        # Wait for the transcript to stop growing before scanning: a stale
+        # sentinel from a prior turn can be present while the fresh one is
+        # still flushing, so "a sentinel exists" is not a safe early exit.
+        for _ in range(FLUSH_RETRIES):
+            SLEEP(FLUSH_WAIT_S)
+            again = read_tail()
+            if again == tail:
+                break
+            tail = again
 
     blocked_pos = tail.rfind("BLOCKED:")
     done_pos = tail.rfind("DONE:")

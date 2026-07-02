@@ -86,3 +86,88 @@ def test_blocker_reason_truncated(tmp_path: Path) -> None:
     transcript = _transcript(tmp_path, "BLOCKED: " + "x" * 1000 + "\n")
     handle_event("beta", {"hook_event_name": "Stop", "transcript_path": transcript}, tmp_path)
     assert len(_read_status(tmp_path, "beta")["blocker_reason"]) <= 300
+
+
+def test_sentinel_found_in_jsonl_transcript_despite_long_trailing_lines(tmp_path: Path) -> None:
+    # Real transcripts are JSONL; a single trailing tool-result line can exceed
+    # the old 4000-char raw tail, hiding the sentinel. The handler must scan
+    # assistant message text, not raw bytes.
+    lines = [
+        json.dumps({"type": "assistant",
+                    "message": {"content": [{"type": "text",
+                                             "text": "DONE: openapi.yaml created"}]}}),
+        json.dumps({"type": "user",
+                    "message": {"content": [{"type": "tool_result",
+                                             "content": "x" * 8000}]}}),
+    ]
+    p = tmp_path / "transcript.jsonl"
+    p.write_text("\n".join(lines) + "\n")
+    handle_event("beta", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "beta" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "openapi.yaml created"
+
+
+def test_jsonl_latest_assistant_sentinel_wins(tmp_path: Path) -> None:
+    def msg(text: str) -> str:
+        return json.dumps({"type": "assistant",
+                           "message": {"content": [{"type": "text", "text": text}]}})
+    p = tmp_path / "transcript.jsonl"
+    p.write_text(msg("BLOCKED: missing file") + "\n" + msg("DONE: resolved and finished") + "\n")
+    handle_event("beta", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    assert json.loads((tmp_path / "beta" / "status.json").read_text())["state"] == "done"
+
+
+def test_stop_retries_read_when_final_message_not_yet_flushed(tmp_path: Path, monkeypatch) -> None:
+    # Race seen live: at Stop-hook time the transcript existed but the final
+    # assistant message (with the sentinel) had not been flushed yet. The
+    # handler must re-read briefly before concluding "idle".
+    from orchestra import write_status
+
+    p = tmp_path / "transcript.jsonl"
+    p.write_text(json.dumps({"type": "assistant",
+                             "message": {"content": [{"type": "text", "text": "working..."}]}}) + "\n")
+
+    flushed = []
+
+    def late_flush(_seconds: float) -> None:
+        if not flushed:
+            flushed.append(True)
+            p.write_text(p.read_text() + json.dumps(
+                {"type": "assistant",
+                 "message": {"content": [{"type": "text", "text": "BLOCKED: file missing"}]}}) + "\n")
+
+    monkeypatch.setattr(write_status, "SLEEP", late_flush)
+    handle_event("beta", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "beta" / "status.json").read_text())
+    assert status["state"] == "blocked"
+    assert status["blocker_reason"] == "file missing"
+
+
+def test_stop_waits_out_stale_sentinel_when_fresh_one_still_flushing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Run-3 regression: transcript already contained an old BLOCKED: from a
+    # prior turn; the fresh DONE: had not flushed yet. A presence-based retry
+    # exits on the stale sentinel — the handler must instead wait for the
+    # transcript to stop growing before scanning.
+    from orchestra import write_status
+
+    def msg(text: str) -> str:
+        return json.dumps({"type": "assistant",
+                           "message": {"content": [{"type": "text", "text": text}]}})
+
+    p = tmp_path / "transcript.jsonl"
+    p.write_text(msg("BLOCKED: openapi.yaml missing") + "\n")
+    flushed = []
+
+    def late_flush(_seconds: float) -> None:
+        if not flushed:
+            flushed.append(True)
+            p.write_text(p.read_text() + msg("DONE: spec created") + "\n")
+
+    monkeypatch.setattr(write_status, "SLEEP", late_flush)
+    handle_event("beta", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "beta" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "spec created"
