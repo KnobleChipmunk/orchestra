@@ -96,3 +96,20 @@ Observe:
 - `tmux attach -t orchestra` — one window per agent (Ctrl-b n to cycle)
 - `watch -n1 cat /home/tusk/agents/beta/status.json` — state flip
 - `tail -f /home/tusk/agents/alpha/agent.log`
+
+## 6. Watching agents live (recommended during any run)
+
+The workers are ordinary interactive Claude Code sessions — attach and you
+see their full streaming TUIs in real time. Nothing about attaching disturbs
+them.
+
+- **One agent, full screen:** `tmux attach -t orchestra`, then `Ctrl-b n`/`p`
+  to cycle windows, `Ctrl-b d` to detach.
+- **Two agents at once:** open two WSL terminal tabs; in each, attach a
+  grouped client showing a different window:
+  `tmux new-session -t orchestra \; select-window -t alpha` (tab 1) and
+  `... -t beta` (tab 2). Grouped clients can sit on different windows of the
+  same session.
+- **Everything scrolling in one pane:** `tail -f /home/tusk/agents/*/agent.log`
+  (pipe-pane capture of every agent's output, interleaved).
+- **Blackboard dashboard:** `watch -n2 'cat /home/tusk/agents/*/status.json'`.
