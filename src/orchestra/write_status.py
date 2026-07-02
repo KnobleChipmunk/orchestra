@@ -85,11 +85,15 @@ def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
 
     tail = read_tail()
     if hook == "Stop":
+        # Wait for the transcript to stop growing before scanning: a stale
+        # sentinel from a prior turn can be present while the fresh one is
+        # still flushing, so "a sentinel exists" is not a safe early exit.
         for _ in range(FLUSH_RETRIES):
-            if "BLOCKED:" in tail or "DONE:" in tail:
-                break
             SLEEP(FLUSH_WAIT_S)
-            tail = read_tail()
+            again = read_tail()
+            if again == tail:
+                break
+            tail = again
 
     blocked_pos = tail.rfind("BLOCKED:")
     done_pos = tail.rfind("DONE:")
