@@ -1,0 +1,76 @@
+# Setup & Smoke Test (Windows 11 + WSL2)
+
+## 1. WSL2 side
+
+```bash
+cd /home/tusk/projects/orchestra
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest   # 24 tests should pass
+
+# Confirm subscription auth (no API key):
+unset ANTHROPIC_API_KEY
+claude /status
+
+# Worktrees for the smoke test (in whatever repo you're testing against):
+cd /home/tusk/myrepo
+git worktree add /home/tusk/agents/alpha-wt -b agent-alpha
+git worktree add /home/tusk/agents/beta-wt  -b agent-beta
+```
+
+## 2. Windows side — `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "claude-orchestrator": {
+      "command": "wsl.exe",
+      "args": [
+        "-e", "bash", "-lc",
+        "cd /home/tusk/projects/orchestra && .venv/bin/python -m orchestra.server"
+      ]
+    }
+  }
+}
+```
+
+Fully **Quit** Claude Desktop (system tray → Quit, not just close) and
+relaunch. Confirm `claude-orchestrator` shows connected in Settings →
+Developer.
+
+## 3. Orchestrator prompt (paste into Desktop)
+
+```
+You are the ORCHESTRATOR. You manage Claude Code worker agents through the
+claude-orchestrator tools. Rules:
+1. Decompose my task into 2-4 INDEPENDENT, file-disjoint subtasks.
+2. For each subtask call spawn_agent(name, task_prompt, workdir). Use
+   workdir=/home/tusk/agents/<name>-wt. Put the full status protocol
+   (below) into every task_prompt.
+3. After spawning, call list_agents and get_agent_status each turn to poll.
+   NEVER assume an agent is done without polling. A state of "idle" means
+   the agent stopped without finishing — read its log and prompt it.
+4. If any agent state is "blocked", read blocker_reason, then either
+   send_to_agent(name, "<resolution>") or re-scope and re-dispatch.
+5. Report progress to me after each poll.
+
+STATUS PROTOCOL to embed in every task_prompt:
+"You are agent <NAME>. Objective: <one sentence>. Output format: <what to
+produce>. Allowed tools: Read, Write, Edit, Bash. Stay strictly within your
+worktree. If you cannot proceed (missing dependency, ambiguous spec, failing
+build you cannot fix), print a line starting exactly with 'BLOCKED:' followed
+by one sentence describing what you need, then stop. When the task is fully
+complete, print a line starting exactly with 'DONE:' followed by a one-line
+summary, then stop."
+```
+
+## 4. Smoke test (pass criteria)
+
+One task to Desktop → ≥2 concurrent workers in tmux → beta hits its
+engineered blocker (reference a file that doesn't exist in its worktree) →
+`status.json` flips to `blocked` → Desktop polls, sees it, reacts via
+`send_to_agent`.
+
+Observe:
+- `tmux attach -t orchestra` — one window per agent (Ctrl-b n to cycle)
+- `watch -n1 cat /home/tusk/agents/beta/status.json` — state flip
+- `tail -f /home/tusk/agents/alpha/agent.log`
