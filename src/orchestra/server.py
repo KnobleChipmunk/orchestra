@@ -26,6 +26,9 @@ TMUX_SESSION = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
 HOOK_HANDLER = Path(__file__).resolve().parent / "write_status.py"
 PYTHON = sys.executable
 STARTUP_DELAY_S = 8  # give claude time to boot before send-keys delivers the task
+CLAUDE_JSON = Path.home() / ".claude.json"
+# States in which a second spawn_agent for the same name is a mistake.
+ACTIVE_STATES = {"starting", "working", "blocked", "idle"}
 
 # Seam for tests: faked so no test ever spawns tmux or claude.
 RUN = subprocess.run
@@ -57,6 +60,22 @@ def _write_status(name: str, state: str, **extra: str | None) -> None:
     (_agent_dir(name) / "status.json").write_text(json.dumps(status, indent=2))
 
 
+def _pre_trust(workdir: str) -> None:
+    """Mark workdir trusted in ~/.claude.json so the worker skips the folder-
+    trust dialog (which otherwise wedges it before the REPL, eating the
+    send-keys task delivery)."""
+    data: dict = {}
+    if CLAUDE_JSON.exists():
+        try:
+            data = json.loads(CLAUDE_JSON.read_text())
+        except json.JSONDecodeError:
+            logger.warning("could not parse %s; leaving it untouched", CLAUDE_JSON)
+            return
+    project = data.setdefault("projects", {}).setdefault(workdir, {})
+    project["hasTrustDialogAccepted"] = True
+    CLAUDE_JSON.write_text(json.dumps(data, indent=2))
+
+
 def _ensure_session() -> None:
     have = RUN(["tmux", "has-session", "-t", TMUX_SESSION], capture_output=True, text=True)
     if have.returncode != 0:
@@ -71,7 +90,17 @@ def spawn_agent(name: str, task_prompt: str, workdir: str) -> str:
     worktree so agents never share files). Returns immediately; poll
     get_agent_status for progress.
     """
+    sp = AGENTS_DIR / name / "status.json"
+    if sp.exists():
+        state = json.loads(sp.read_text()).get("state")
+        if state in ACTIVE_STATES:
+            return (
+                f"Agent '{name}' already exists in state '{state}' — not spawning a "
+                f"duplicate. Poll get_agent_status, send_to_agent, or stop_agent first."
+            )
+
     _ensure_session()
+    _pre_trust(workdir)
     d = _agent_dir(name)
     log = d / "agent.log"
     (d / "task.md").write_text(task_prompt)

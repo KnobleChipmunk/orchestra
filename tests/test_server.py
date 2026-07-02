@@ -159,3 +159,55 @@ def test_stop_agent_kills_window_and_marks_stopped(fake: FakeRun) -> None:
     server.stop_agent("alpha")
     assert any(c[:2] == ["tmux", "kill-window"] for c in fake.calls)
     assert json.loads(server.get_agent_status("alpha"))["state"] == "stopped"
+
+
+# --- trust pre-seeding and duplicate-spawn guard ----------------------------
+
+def test_spawn_pre_trusts_workdir_in_claude_json(fake: FakeRun, monkeypatch, tmp_path: Path) -> None:
+    # Workers boot into the folder-trust dialog unless the workdir is already
+    # trusted in ~/.claude.json; spawn must pre-seed it or the agent wedges.
+    cfg = tmp_path / "claude.json"
+    cfg.write_text(json.dumps({"projects": {"/existing": {"foo": 1}}, "theme": "dark"}))
+    monkeypatch.setattr(server, "CLAUDE_JSON", cfg)
+    _spawn(workdir="/wt")
+    data = json.loads(cfg.read_text())
+    assert data["projects"]["/wt"]["hasTrustDialogAccepted"] is True
+    assert data["projects"]["/existing"] == {"foo": 1}  # existing config preserved
+    assert data["theme"] == "dark"
+
+
+def test_spawn_pre_trust_creates_claude_json_if_missing(
+    fake: FakeRun, monkeypatch, tmp_path: Path
+) -> None:
+    cfg = tmp_path / "claude.json"
+    monkeypatch.setattr(server, "CLAUDE_JSON", cfg)
+    _spawn(workdir="/wt")
+    assert json.loads(cfg.read_text())["projects"]["/wt"]["hasTrustDialogAccepted"] is True
+
+
+def test_spawn_refuses_duplicate_active_agent(fake: FakeRun) -> None:
+    # Desktop retried spawn_agent during the smoke test and got 3 windows all
+    # named alpha; a second spawn for a live agent must refuse, not duplicate.
+    _spawn(name="alpha")
+    fake.calls.clear()
+    result = server.spawn_agent("alpha", "again", "/wt")
+    assert "already" in result.lower()
+    assert not any(c[:2] == ["tmux", "new-window"] for c in fake.calls)
+
+
+def test_spawn_allowed_again_after_stop(fake: FakeRun) -> None:
+    _spawn(name="alpha")
+    server.stop_agent("alpha")
+    fake.calls.clear()
+    result = server.spawn_agent("alpha", "again", "/wt")
+    assert "Spawned" in result
+    assert any(c[:2] == ["tmux", "new-window"] for c in fake.calls)
+
+
+def test_spawn_allowed_again_after_done(fake: FakeRun) -> None:
+    _spawn(name="alpha")
+    status_path = server.AGENTS_DIR / "alpha" / "status.json"
+    s = json.loads(status_path.read_text())
+    s["state"] = "done"
+    status_path.write_text(json.dumps(s))
+    assert "Spawned" in server.spawn_agent("alpha", "again", "/wt")
