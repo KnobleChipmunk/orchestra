@@ -46,3 +46,36 @@ never content.
   "read one message" — batching under mid-turn queuing is normal.
 - A final turn-end inbox check (already in LEAD.md) covers draft-guarded
   deliveries.
+
+---
+
+# Phase C Gate Results — uncoached lead run (2026-07-03)
+
+**Verdict: PASS.** A fresh Opus lead, briefed only by docs/LEAD.md plus a
+two-subtask goal, decomposed, spawned two Sonnet workers into separate
+worktrees, was woken by their hook-driven DONE nudges, reviewed both diffs,
+ran the test suite itself, and emitted a genuine line-initial DONE — no
+coaching of the lead's decisions at any point.
+
+## Findings fixed mid-gate (both merged with regression tests)
+
+1. **MCP permission wedge** (PR #5): acceptEdits + Read/Write/Edit/Bash
+   allowlist does not cover MCP tools; the lead froze on a dialog at its
+   first orchestrator call. spawn_agent now pre-approves
+   `mcp__claude-orchestrator`.
+2. **Quoted-sentinel false done** (PR #6): the lead quoting the protocol
+   ("print 'DONE: <summary>'") in its planning prose was detected as a real
+   DONE 15s into the run. Sentinels now count only at line start.
+
+## Operational finding (not a bug): parked human drafts stall the loop
+
+A human-typed draft sat in the lead's input box; the draft guard correctly
+skipped every nudge to protect it, so both worker DONEs waited silently in
+the inbox until a human submitted/cleared the draft. Working as designed,
+but it makes the D4 watchdog (staleness sweep) the priority Phase D package,
+and argues for the lead's turn-end inbox check being non-negotiable.
+
+## Interventions tally (gate acceptance context)
+
+Two mid-run code fixes (above) plus one delivery assist caused by the parked
+draft. Zero coaching of decomposition, spawning, monitoring, or review.
