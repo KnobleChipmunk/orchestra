@@ -263,3 +263,30 @@ def test_ask_then_done_resolves_to_done(tmp_path: Path, monkeypatch) -> None:
     handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
                  notify_target="lead", session="orchestra")
     assert json.loads((tmp_path / "w1" / "status.json").read_text())["state"] == "done"
+
+
+def test_quoted_sentinel_in_prose_is_not_detected(tmp_path: Path, monkeypatch) -> None:
+    # Phase C gate finding: the LEAD quoted the protocol ("print 'DONE:
+    # <summary>' and stop") while planning, and its Stop hook read that as a
+    # real DONE. Only line-initial sentinels count.
+    calls = _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg(
+        "I will spawn two workers. Each prompt ends with: when complete, "
+        "print 'DONE: <summary>' and stop; if stuck print 'BLOCKED: <reason>'."
+    ) + "\n")
+    handle_event("lead", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="boss", session="orchestra")
+    status = json.loads((tmp_path / "lead" / "status.json").read_text())
+    assert status["state"] == "idle"
+    assert not calls  # and no notify fired for the quoted text
+
+
+def test_line_initial_sentinel_still_detected(tmp_path: Path, monkeypatch) -> None:
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("Both verified.\nDONE: glossary and banner complete") + "\n")
+    handle_event("lead", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "lead" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "glossary and banner complete"
