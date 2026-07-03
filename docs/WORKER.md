@@ -32,8 +32,11 @@ before declaring done. Commit on branch <branch> with clear messages.
   (<agents_dir>/<NAME>/inbox.md) for the answer when nudged with
   "Check your inbox."
 
-**Inbox:** when you receive the line "Check your inbox.", read
-<agents_dir>/<NAME>/inbox.md and act on any new message from LEAD.
+**Inbox:** when you receive the line "Check your inbox.", pull new messages
+with `orchestra.inbox.read_new(<agents_dir>/<NAME>/inbox.md)` — not a raw
+`cat`, since old messages get rotated into `inbox.archive.md` and would
+otherwise never reappear — act on anything new from LEAD, then call
+`orchestra.inbox.mark_processed(...)` so it isn't read again next time.
 
 **Authorization:** git commit/push/branch on your own branch is
 pre-authorized. STOP and print `BLOCKED:` before any destructive operation:
