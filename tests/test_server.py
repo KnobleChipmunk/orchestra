@@ -264,3 +264,12 @@ def test_spawn_without_notify_target_sets_no_notify_env(fake: FakeRun) -> None:
     _spawn()
     launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
     assert "ORCHESTRA_NOTIFY_TARGET" not in launch
+
+
+def test_spawn_enables_project_mcp_servers(fake: FakeRun) -> None:
+    # The lead spawns workers via the orchestrator MCP tools; its session must
+    # auto-approve the project-scope .mcp.json in its worktree (a dialog would
+    # wedge it exactly like the trust prompt did).
+    _spawn()
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "enableAllProjectMcpServers" in launch
