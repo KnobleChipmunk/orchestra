@@ -290,3 +290,21 @@ def test_line_initial_sentinel_still_detected(tmp_path: Path, monkeypatch) -> No
     status = json.loads((tmp_path / "lead" / "status.json").read_text())
     assert status["state"] == "done"
     assert status["summary"] == "glossary and banner complete"
+
+
+def test_stop_after_a_done_turn_without_new_sentinel_is_idle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Live finding: the lead's post-DONE cleanup turn ended and the hook
+    # re-detected the PREVIOUS turn's DONE from transcript history, marking a
+    # busy lead done with a stale summary. Stop must reflect only the final
+    # assistant message of the current turn.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _jmsg("DONE: Phase D complete, PRs merged") + "\n"
+        + _jmsg("Workers stopped, worktrees pruned. Spawning d4 now.") + "\n"
+    )
+    handle_event("lead", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "lead" / "status.json").read_text())
+    assert status["state"] == "idle"
