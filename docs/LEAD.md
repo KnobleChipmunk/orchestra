@@ -91,3 +91,6 @@ editing `~/.claude.json` beyond trust entries; killing an agent that is not
 - Never assume a worker finished without a `DONE:` sentinel in status.json.
 - Worker names: short, unique, lowercase (w1, w2, parser, docs...).
 - Keep your own outputs terse; your pane is Nate's monitoring surface.
+- Never self-nudge by typing into your own pane; queue the intent in your
+  own notes or act on it within the turn instead — a parked self-draft
+  sits in your input box and deadlocks the nudge channel for everyone else.
