@@ -36,12 +36,22 @@ FLUSH_WAIT_S = 0.5
 SLEEP = time.sleep  # seam for tests
 
 
-def _sentinel_after(tail: str, sentinel: str) -> str | None:
-    """Return the first line following the LAST occurrence of sentinel, or None."""
-    if sentinel not in tail:
-        return None
-    after = tail.rsplit(sentinel, 1)[1].strip()
-    return (after.splitlines()[0][:REASON_MAX] if after else "unspecified") or "unspecified"
+def _sentinel_lines(text: str) -> list[tuple[str, str]]:
+    """(sentinel, rest-of-line) for every LINE-INITIAL sentinel, in order.
+
+    Only line-initial occurrences count: agents QUOTE the protocol in prose
+    ("print 'DONE: <summary>' and stop"), and matching those produced false
+    done states. Leading whitespace is tolerated; quotes/bullets are not.
+    """
+    out = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        for s in SENTINELS:
+            if stripped.startswith(s):
+                rest = stripped[len(s):].strip()[:REASON_MAX] or "unspecified"
+                out.append((s, rest))
+                break
+    return out
 
 
 def _assistant_text(raw: str, max_chars: int = TAIL_BYTES) -> str:
@@ -89,7 +99,8 @@ def _maybe_notify(name: str, event: dict, agents_dir: Path,
     if not (notify_target and session):
         return
     full = _full_assistant_text(event)
-    count = sum(full.count(s) for s in SENTINELS)
+    found = _sentinel_lines(full)
+    count = len(found)
     state_path = agents_dir / name / "notify_state.json"
     seen = 0
     if state_path.exists():
@@ -100,8 +111,7 @@ def _maybe_notify(name: str, event: dict, agents_dir: Path,
     if count <= seen:
         return
     # Report the latest sentinel line as the event body.
-    latest = max((full.rfind(s), s) for s in SENTINELS)
-    line = full[latest[0]:].splitlines()[0][:400]
+    line = f"{found[-1][0]} {found[-1][1]}"[:400]
     from orchestra import messaging
     messaging.deliver(target=notify_target, message=line, sender=name,
                       agents_dir=agents_dir, session=session)
@@ -138,23 +148,24 @@ def handle_event(name: str, event: dict, agents_dir: Path,
                 break
             tail = again
 
-    latest_pos, latest = max((tail.rfind(s), s) for s in SENTINELS)
+    found = _sentinel_lines(tail)
+    latest, rest = found[-1] if found else (None, None)
 
     state, blocker, needs, summary, question = "working", None, None, None, None
-    if latest_pos >= 0 and latest == "DONE:":
+    if latest == "DONE:":
         if hook == "Stop":
             state = "done"
-            summary = _sentinel_after(tail, "DONE:")
+            summary = rest
         # mid-turn DONE: leave state working; Stop will settle it
-    elif latest_pos >= 0 and latest == "BLOCKED:":
+    elif latest == "BLOCKED:":
         # Blockers surface immediately, even mid-turn.
         state = "blocked"
-        blocker = _sentinel_after(tail, "BLOCKED:")
+        blocker = rest
         needs = "orchestrator_input"
-    elif latest_pos >= 0 and latest == "ASK:":
+    elif latest == "ASK:":
         # Questions keep the worker on-task: state stays working.
         needs = "lead_input"
-        question = _sentinel_after(tail, "ASK:")
+        question = rest
     elif hook == "Stop":
         state = "idle"
         needs = "awaiting_input"
