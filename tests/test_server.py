@@ -12,19 +12,27 @@ from orchestra import server
 
 
 class FakeRun:
-    """Captures subprocess.run calls; pretends tmux session already exists."""
+    """Captures subprocess.run calls; pretends tmux session already exists.
+
+    `git_status_stdout` lets tests simulate a dirty/clean worktree for the
+    `git status --porcelain` check stop_agent runs before killing a window.
+    """
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.git_status_stdout = ""
 
     def __call__(self, cmd, **kwargs):
         self.calls.append(list(cmd))
+        is_git_status = cmd[:1] == ["git"] and "status" in cmd
 
         class R:
             returncode = 0
             stdout = ""
             stderr = ""
 
+        if is_git_status:
+            R.stdout = self.git_status_stdout
         return R()
 
     def commands(self) -> list[str]:
@@ -281,3 +289,81 @@ def test_spawn_preapproves_orchestrator_mcp_tools(fake: FakeRun) -> None:
     _spawn()
     launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
     assert "mcp__claude-orchestrator" in launch
+
+
+# --- v3: session-id persistence + respawn_agent + stop_agent guard ---------
+
+def test_spawn_passes_session_id_and_persists_it_with_workdir(fake: FakeRun) -> None:
+    _spawn(name="alpha", workdir="/wt/alpha")
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "--session-id" in launch
+    status = json.loads((server.AGENTS_DIR / "alpha" / "status.json").read_text())
+    assert status["session_id"]
+    assert status["session_id"] in launch
+    assert status["workdir"] == "/wt/alpha"
+
+
+def test_respawn_uses_resume_with_persisted_session_and_workdir(fake: FakeRun) -> None:
+    _spawn(name="alpha", workdir="/wt/alpha")
+    session_id = json.loads(
+        (server.AGENTS_DIR / "alpha" / "status.json").read_text()
+    )["session_id"]
+    fake.calls.clear()
+    server.respawn_agent("alpha")
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert f"--resume {session_id}" in launch
+    assert "cd /wt/alpha" in launch
+
+
+def test_respawn_kills_existing_window_first(fake: FakeRun) -> None:
+    _spawn(name="alpha")
+    fake.calls.clear()
+    server.respawn_agent("alpha")
+    calls = fake.commands()
+    kill_idx = next(i for i, c in enumerate(calls) if c.startswith("tmux kill-window"))
+    new_window_idx = next(i for i, c in enumerate(calls) if c.startswith("tmux new-window"))
+    assert kill_idx < new_window_idx
+
+
+def test_respawn_reattaches_pipe_pane_logging(fake: FakeRun) -> None:
+    _spawn(name="alpha")
+    fake.calls.clear()
+    server.respawn_agent("alpha")
+    pipe = next(c for c in fake.calls if c[:2] == ["tmux", "pipe-pane"])
+    assert "agent.log" in " ".join(pipe)
+
+
+def test_respawn_missing_agent_reports_error(fake: FakeRun) -> None:
+    assert "No agent" in server.respawn_agent("ghost")
+
+
+def test_stop_agent_refuses_with_uncommitted_changes(fake: FakeRun) -> None:
+    _spawn(name="alpha", workdir="/wt/alpha")
+    fake.git_status_stdout = " M some_file.py\n"
+    fake.calls.clear()
+    result = server.stop_agent("alpha")
+    assert "uncommitted" in result.lower() or "force" in result.lower()
+    assert not any(c[:2] == ["tmux", "kill-window"] for c in fake.calls)
+    status = json.loads((server.AGENTS_DIR / "alpha" / "status.json").read_text())
+    assert status["state"] != "stopped"
+
+
+def test_stop_agent_proceeds_when_worktree_clean(fake: FakeRun) -> None:
+    _spawn(name="alpha", workdir="/wt/alpha")
+    fake.git_status_stdout = ""
+    fake.calls.clear()
+    server.stop_agent("alpha")
+    assert any(c[:2] == ["tmux", "kill-window"] for c in fake.calls)
+    status = json.loads((server.AGENTS_DIR / "alpha" / "status.json").read_text())
+    assert status["state"] == "stopped"
+
+
+def test_stop_agent_force_overrides_dirty_worktree(fake: FakeRun) -> None:
+    _spawn(name="alpha", workdir="/wt/alpha")
+    fake.git_status_stdout = " M some_file.py\n"
+    fake.calls.clear()
+    result = server.stop_agent("alpha", force=True)
+    assert any(c[:2] == ["tmux", "kill-window"] for c in fake.calls)
+    status = json.loads((server.AGENTS_DIR / "alpha" / "status.json").read_text())
+    assert status["state"] == "stopped"
+    assert "stopped" in result.lower()
