@@ -54,10 +54,12 @@ def _sentinel_lines(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _assistant_text(raw: str, max_chars: int = TAIL_BYTES) -> str:
+def _assistant_text(raw: str, max_chars: int = TAIL_BYTES,
+                    last_only: bool = False) -> str:
     """Concatenate text blocks of assistant messages from a JSONL transcript,
-    in order, keeping the last max_chars. Returns "" if no assistant text is
-    found (e.g. the transcript is not JSONL)."""
+    in order, keeping the last max_chars. last_only=True returns just the
+    FINAL assistant message — the only one that reflects the current turn's
+    outcome. Returns "" if no assistant text is found (non-JSONL input)."""
     texts: list[str] = []
     for line in raw.splitlines():
         line = line.strip()
@@ -75,7 +77,10 @@ def _assistant_text(raw: str, max_chars: int = TAIL_BYTES) -> str:
         elif isinstance(content, list):
             texts.extend(b.get("text", "") for b in content
                          if isinstance(b, dict) and b.get("type") == "text")
-    return "\n".join(t for t in texts if t)[-max_chars:]
+    texts = [t for t in texts if t]
+    if last_only:
+        return texts[-1][-max_chars:] if texts else ""
+    return "\n".join(texts)[-max_chars:]
 
 
 SENTINELS = ("DONE:", "BLOCKED:", "ASK:")
@@ -131,10 +136,11 @@ def handle_event(name: str, event: dict, agents_dir: Path,
             return ""
         raw = Path(transcript).read_text()
         # Real transcripts are JSONL where one trailing tool-result line can
-        # exceed any raw byte tail — scan assistant message text instead, and
-        # only fall back to a raw tail for non-JSONL content (tests, future
-        # format changes).
-        return _assistant_text(raw) or raw[-TAIL_BYTES:]
+        # exceed any raw byte tail. Scan ONLY the final assistant message:
+        # earlier turns' sentinels are history, not this turn's outcome
+        # (a prior DONE: was re-detected after a sentinel-less cleanup turn).
+        # Fall back to a raw tail for non-JSONL content.
+        return _assistant_text(raw, last_only=True) or raw[-TAIL_BYTES:]
 
     tail = read_tail()
     if hook == "Stop":
