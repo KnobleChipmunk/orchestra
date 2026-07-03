@@ -86,3 +86,103 @@ def test_deliver_multiline_message_lands_whole_in_inbox(
     assert "line1\nline2" in (tmp_path / "lead" / "inbox.md").read_text()
     sends = [c for c in fake.calls if c[:2] == ["tmux", "send-keys"]]
     assert all("\n" not in c[-1] for c in sends)  # keystrokes stay single-line
+
+
+# --- draft guard must inspect the input box, not scrollback ------------------
+
+TUI = """\
+● ACK 1: W1: DONE: pilot worker finished
+❯ Check your inbox.
+● Working on it
+{rule}
+❯\xa0{prompt}
+{rule}
+  Opus 4.8 | 50k | thinking: Off
+"""
+RULE = "─" * 60
+
+
+def _tui(prompt: str) -> str:
+    return TUI.format(rule=RULE, prompt=prompt)
+
+
+def test_submitted_history_lines_are_not_drafts(monkeypatch, tmp_path: Path) -> None:
+    # Scrollback shows past submissions with the same ❯ prefix as the live
+    # prompt; only the input box (between the bottom rules) counts.
+    f = FakeRun(pane_text=_tui(""))
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    _deliver(f, tmp_path)
+    assert any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
+
+
+def test_real_draft_in_input_box_is_detected(monkeypatch, tmp_path: Path) -> None:
+    f = FakeRun(pane_text=_tui("half-typed human thought"))
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    _deliver(f, tmp_path)
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
+
+
+def test_stuck_nudge_in_input_box_is_resubmitted_not_skipped(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # A nudge whose Enter was lost mid-turn sits in the input box. Treating it
+    # as a human draft would deadlock all future nudges — deliver must instead
+    # self-heal by sending Enter alone.
+    f = FakeRun(pane_text=_tui(messaging.NUDGE_LINE))
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    result = _deliver(f, tmp_path)
+    sends = [c for c in f.calls if c[:2] == ["tmux", "send-keys"]]
+    # Bare Enter is ignored on a stale box; a fresh keystroke must precede it.
+    assert sends[0][-1] == " "
+    assert sends[-1][-1] == "Enter"
+    assert "stuck" in result.lower() or "resubmit" in result.lower()
+
+
+class SequenceRun(FakeRun):
+    """capture-pane returns successive canned texts across calls."""
+
+    def __init__(self, pane_texts: list[str]) -> None:
+        super().__init__()
+        self.pane_texts = list(pane_texts)
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append(list(cmd))
+
+        text = ""
+        if cmd[:2] == ["tmux", "capture-pane"]:
+            text = self.pane_texts.pop(0) if len(self.pane_texts) > 1 else self.pane_texts[0]
+
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = text
+
+        return R()
+
+
+def test_deliver_verifies_submission_and_retries_once(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Box empty before send; after Enter the nudge is STILL sitting there
+    # (mid-turn swallow) -> deliver must retype-and-Enter once more.
+    f = SequenceRun([_tui(""), _tui(messaging.NUDGE_LINE), _tui("")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    _deliver(f, tmp_path)
+    sends = [c[-1] for c in f.calls if c[:2] == ["tmux", "send-keys"]]
+    assert sends[:2] == [messaging.NUDGE_LINE, "Enter"]
+    assert " " in sends[2:] and sends[-1] == "Enter"  # retry: fresh char + Enter
+
+
+def test_deliver_no_retry_when_submission_verified(
+    monkeypatch, tmp_path: Path
+) -> None:
+    f = SequenceRun([_tui(""), _tui("")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    _deliver(f, tmp_path)
+    sends = [c[-1] for c in f.calls if c[:2] == ["tmux", "send-keys"]]
+    assert sends == [messaging.NUDGE_LINE, "Enter"]
