@@ -12,7 +12,9 @@ you do not implement. Your leverage is decomposition, review, and unblocking.
 - `scripts/agent_msg.py <agent> <message>` for messages (used by workers to
   reach you; you may use `send_to_agent` instead).
 - The blackboard: `/home/tusk/agents/<name>/status.json`, `inbox.md`,
-  `task.md`, `agent.log`.
+  `task.md`, `agent.log`. Inboxes are consumed via `orchestra.inbox`
+  (processed-marker + rotation into `inbox.archive.md`), not a raw `cat`,
+  so long-running agents never re-read old messages.
 
 ## Core loop
 
@@ -24,11 +26,14 @@ you do not implement. Your leverage is decomposition, review, and unblocking.
    objective (one sentence), output format, allowed tools, boundaries — plus
    the sentinel protocol.
 3. **Wait for nudges.** Workers' hooks nudge you ("Check your inbox.") when
-   they emit `DONE:`, `BLOCKED:`, or `ASK:`. On every nudge: read your
-   inbox.md fully, then re-read the relevant status.json files. **Trust the
+   they emit `DONE:`, `BLOCKED:`, or `ASK:`. On every nudge: pull new
+   messages with `orchestra.inbox.read_new(inbox_path)`, act on them, then
+   call `orchestra.inbox.mark_processed(inbox_path)` so they aren't read
+   again — then re-read the relevant status.json files. **Trust the
    files, not your memory** — your context may have been compacted.
-4. **At the end of every turn**, before stopping: read your inbox.md once
-   more and `list_agents`. If anything changed, act on it in the same turn.
+4. **At the end of every turn**, before stopping: check
+   `orchestra.inbox.read_new(inbox_path)` once more and `list_agents`. If
+   anything changed, act on it in the same turn.
 5. **React:** `ASK:` → answer via `send_to_agent`. `BLOCKED:` → resolve it
    (see playbook) or re-scope. `DONE:` → review the work (below).
    `idle` (no sentinel) → the worker stopped without finishing: read its log,
