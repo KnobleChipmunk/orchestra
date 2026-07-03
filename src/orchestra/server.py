@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,33 +90,18 @@ def _ensure_session() -> None:
         RUN(["tmux", "new-session", "-d", "-s", TMUX_SESSION, "-n", "home"], check=True)
 
 
-def spawn_agent(name: str, task_prompt: str, workdir: str,
-                model: str = "sonnet", notify_target: str | None = None) -> str:
-    """Launch a Claude Code worker in its own tmux window.
-
-    name: unique agent id (e.g. 'alpha'). task_prompt: the scoped subtask
-    including the status protocol. workdir: absolute WSL path (must be a git
-    worktree so agents never share files). model: claude model alias
-    ('sonnet' for workers, 'opus' for the lead). notify_target: agent name
-    whose inbox/pane gets nudged when this agent emits a sentinel.
-    Returns immediately; poll get_agent_status for progress.
+def _launch_claude_window(name: str, workdir: str, model: str,
+                          notify_target: str | None, session_flag: str) -> str:
+    """Open a tmux window running `claude` with the given session flag
+    (`--session-id <uuid>` for a fresh spawn, `--resume <id>` for a respawn)
+    and attach pipe-pane logging. Shared by spawn_agent and respawn_agent so
+    the launch flags never drift between the two paths. Returns the tmux
+    target (`session:window`).
     """
-    sp = AGENTS_DIR / name / "status.json"
-    if sp.exists():
-        state = json.loads(sp.read_text()).get("state")
-        if state in ACTIVE_STATES:
-            return (
-                f"Agent '{name}' already exists in state '{state}' — not spawning a "
-                f"duplicate. Poll get_agent_status, send_to_agent, or stop_agent first."
-            )
-
     _ensure_session()
     _pre_trust(workdir)
     d = _agent_dir(name)
     log = d / "agent.log"
-    (d / "task.md").write_text(task_prompt)
-    (d / "inbox.md").write_text(f"# Inbox for {name}\n")
-    _write_status(name, "starting")
 
     hook_cmd = f"{PYTHON} {shlex.quote(str(HOOK_HANDLER))} {shlex.quote(name)}"
     settings = json.dumps({
@@ -149,13 +135,49 @@ def spawn_agent(name: str, task_prompt: str, workdir: str,
         # mcp__claude-orchestrator pre-approves the orchestrator MCP tools for
         # lead sessions — acceptEdits does not cover MCP calls and a
         # permission dialog wedges unattended agents.
-        f'--allowedTools "Read,Write,Edit,Bash,mcp__claude-orchestrator"'
+        f'--allowedTools "Read,Write,Edit,Bash,mcp__claude-orchestrator" '
+        f"{session_flag}"
     )
     target = f"{TMUX_SESSION}:{name}"
     RUN(["tmux", "new-window", "-t", TMUX_SESSION, "-n", name, launch], check=True)
     # pipe-pane logs the pane's output without touching the process's TTY.
     RUN(["tmux", "pipe-pane", "-o", "-t", target,
          f"cat >> {shlex.quote(str(log))}"], check=True)
+    return target
+
+
+def spawn_agent(name: str, task_prompt: str, workdir: str,
+                model: str = "sonnet", notify_target: str | None = None) -> str:
+    """Launch a Claude Code worker in its own tmux window.
+
+    name: unique agent id (e.g. 'alpha'). task_prompt: the scoped subtask
+    including the status protocol. workdir: absolute WSL path (must be a git
+    worktree so agents never share files). model: claude model alias
+    ('sonnet' for workers, 'opus' for the lead). notify_target: agent name
+    whose inbox/pane gets nudged when this agent emits a sentinel.
+    Returns immediately; poll get_agent_status for progress.
+    """
+    sp = AGENTS_DIR / name / "status.json"
+    if sp.exists():
+        state = json.loads(sp.read_text()).get("state")
+        if state in ACTIVE_STATES:
+            return (
+                f"Agent '{name}' already exists in state '{state}' — not spawning a "
+                f"duplicate. Poll get_agent_status, send_to_agent, or stop_agent first."
+            )
+
+    d = _agent_dir(name)
+    (d / "task.md").write_text(task_prompt)
+    (d / "inbox.md").write_text(f"# Inbox for {name}\n")
+
+    # Persisted so respawn_agent/stop_agent can recover this agent's launch
+    # parameters and worktree after this call returns.
+    session_id = str(uuid.uuid4())
+    _write_status(name, "starting", session_id=session_id, workdir=workdir,
+                  model=model, notify_target=notify_target)
+
+    target = _launch_claude_window(name, workdir, model, notify_target,
+                                   f"--session-id {session_id}")
 
     # Deliver the task after claude boots: one short send-keys line pointing at
     # task.md (multiline send-keys is fragile). run-shell -b keeps this tool
@@ -176,6 +198,40 @@ def spawn_agent(name: str, task_prompt: str, workdir: str,
     return (
         f"Spawned agent '{name}' in tmux window {target}, cwd={workdir}. "
         f"Task will be delivered in ~{STARTUP_DELAY_S}s; poll get_agent_status."
+    )
+
+
+def respawn_agent(name: str) -> str:
+    """Recover a wedged or killed worker by resuming its persisted Claude
+    session in a fresh tmux window, replaying the same launch flags
+    spawn_agent used originally. Returns immediately."""
+    sp = AGENTS_DIR / name / "status.json"
+    if not sp.exists():
+        return f"No agent named '{name}' — nothing to respawn."
+
+    status = json.loads(sp.read_text())
+    session_id = status.get("session_id")
+    workdir = status.get("workdir")
+    if not session_id or not workdir:
+        return (
+            f"Agent '{name}' has no persisted session id/workdir to resume "
+            f"(spawned before respawn support was added?)."
+        )
+    model = status.get("model") or "sonnet"
+    notify_target = status.get("notify_target")
+
+    # Best-effort: if the window is already gone this is a harmless no-op.
+    RUN(["tmux", "kill-window", "-t", f"{TMUX_SESSION}:{name}"])
+
+    target = _launch_claude_window(name, workdir, model, notify_target,
+                                   f"--resume {session_id}")
+    _write_status(name, "starting", session_id=session_id, workdir=workdir,
+                  model=model, notify_target=notify_target)
+
+    logger.info("respawned agent %s in %s (session=%s)", name, target, session_id)
+    return (
+        f"Respawned agent '{name}' in tmux window {target}, resuming session "
+        f"{session_id}."
     )
 
 
@@ -226,8 +282,25 @@ def read_agent_log(name: str, tail: int = 40) -> str:
     return "\n".join(lp.read_text().splitlines()[-tail:])
 
 
-def stop_agent(name: str) -> str:
-    """Terminate an agent's tmux window and mark it stopped on the blackboard."""
+def stop_agent(name: str, force: bool = False) -> str:
+    """Terminate an agent's tmux window and mark it stopped on the blackboard.
+
+    Refuses to kill an agent whose persisted worktree has uncommitted changes
+    unless force=True, so a stop never silently discards in-progress work.
+    """
+    sp = AGENTS_DIR / name / "status.json"
+    if sp.exists() and not force:
+        workdir = json.loads(sp.read_text()).get("workdir")
+        if workdir:
+            status_check = RUN(["git", "-C", workdir, "status", "--porcelain"],
+                               capture_output=True, text=True)
+            if (status_check.stdout or "").strip():
+                return (
+                    f"Refusing to stop '{name}': its worktree at {workdir} has "
+                    f"uncommitted changes. Commit them or call stop_agent with "
+                    f"force=True."
+                )
+
     RUN(["tmux", "kill-window", "-t", f"{TMUX_SESSION}:{name}"])
     if (AGENTS_DIR / name).exists():
         _write_status(name, "stopped")
@@ -236,7 +309,7 @@ def stop_agent(name: str) -> str:
 
 # Register tools while keeping the plain functions importable/callable in tests.
 for _fn in (spawn_agent, send_to_agent, get_agent_status, list_agents,
-            read_agent_log, stop_agent):
+            read_agent_log, stop_agent, respawn_agent):
     mcp.tool(_fn)
 
 if __name__ == "__main__":
