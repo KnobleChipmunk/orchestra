@@ -68,7 +68,50 @@ def _assistant_text(raw: str, max_chars: int = TAIL_BYTES) -> str:
     return "\n".join(t for t in texts if t)[-max_chars:]
 
 
-def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
+SENTINELS = ("DONE:", "BLOCKED:", "ASK:")
+
+
+def _full_assistant_text(event: dict) -> str:
+    transcript = event.get("transcript_path")
+    if not (transcript and Path(transcript).exists()):
+        return ""
+    return _assistant_text(Path(transcript).read_text(), max_chars=10**9)
+
+
+def _maybe_notify(name: str, event: dict, agents_dir: Path,
+                  notify_target: str | None, session: str | None) -> None:
+    """Nudge the notify target when a NEW sentinel appears (dedupe by count).
+
+    Counts are over the full assistant text so transcript growth can only
+    increase them; the last-notified count persists in the agent dir, so the
+    same sentinel is never re-nudged on later Stop/PostToolUse events.
+    """
+    if not (notify_target and session):
+        return
+    full = _full_assistant_text(event)
+    count = sum(full.count(s) for s in SENTINELS)
+    state_path = agents_dir / name / "notify_state.json"
+    seen = 0
+    if state_path.exists():
+        try:
+            seen = json.loads(state_path.read_text()).get("notified_count", 0)
+        except json.JSONDecodeError:
+            seen = 0
+    if count <= seen:
+        return
+    # Report the latest sentinel line as the event body.
+    latest = max((full.rfind(s), s) for s in SENTINELS)
+    line = full[latest[0]:].splitlines()[0][:400]
+    from orchestra import messaging
+    messaging.deliver(target=notify_target, message=line, sender=name,
+                      agents_dir=agents_dir, session=session)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"notified_count": count}))
+
+
+def handle_event(name: str, event: dict, agents_dir: Path,
+                 notify_target: str | None = None,
+                 session: str | None = None) -> dict:
     """Compute and write status.json for one hook event; returns the status."""
     hook = event.get("hook_event_name", "")
 
@@ -95,26 +138,26 @@ def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
                 break
             tail = again
 
-    blocked_pos = tail.rfind("BLOCKED:")
-    done_pos = tail.rfind("DONE:")
+    latest_pos, latest = max((tail.rfind(s), s) for s in SENTINELS)
 
-    state, blocker, needs, summary = "working", None, None, None
-    if hook == "Stop":
-        if done_pos > blocked_pos:
+    state, blocker, needs, summary, question = "working", None, None, None, None
+    if latest_pos >= 0 and latest == "DONE:":
+        if hook == "Stop":
             state = "done"
             summary = _sentinel_after(tail, "DONE:")
-        elif blocked_pos >= 0:
-            state = "blocked"
-            blocker = _sentinel_after(tail, "BLOCKED:")
-            needs = "orchestrator_input"
-        else:
-            state = "idle"
-            needs = "awaiting_input"
-    elif blocked_pos > done_pos:
-        # Mid-turn hooks can still surface a blocker early.
+        # mid-turn DONE: leave state working; Stop will settle it
+    elif latest_pos >= 0 and latest == "BLOCKED:":
+        # Blockers surface immediately, even mid-turn.
         state = "blocked"
         blocker = _sentinel_after(tail, "BLOCKED:")
         needs = "orchestrator_input"
+    elif latest_pos >= 0 and latest == "ASK:":
+        # Questions keep the worker on-task: state stays working.
+        needs = "lead_input"
+        question = _sentinel_after(tail, "ASK:")
+    elif hook == "Stop":
+        state = "idle"
+        needs = "awaiting_input"
 
     status = {
         "agent": name,
@@ -123,11 +166,13 @@ def handle_event(name: str, event: dict, agents_dir: Path) -> dict:
         "blocker_reason": blocker,
         "needs": needs,
         "summary": summary,
+        "question": question,
         "updated": datetime.now(timezone.utc).isoformat(),
     }
     d = agents_dir / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "status.json").write_text(json.dumps(status, indent=2))
+    _maybe_notify(name, event, agents_dir, notify_target, session)
     return status
 
 
@@ -138,7 +183,11 @@ def main() -> None:
     except (json.JSONDecodeError, ValueError):
         logger.warning("hook stdin was not valid JSON; proceeding with empty event")
         event = {}
-    handle_event(name, event, DEFAULT_AGENTS_DIR)
+    handle_event(
+        name, event, DEFAULT_AGENTS_DIR,
+        notify_target=os.environ.get("ORCHESTRA_NOTIFY_TARGET"),
+        session=os.environ.get("ORCHESTRA_TMUX_SESSION"),
+    )
     # Exit 0 = allow the Stop/tool to proceed normally.
     print(json.dumps({"continue": True}))
 

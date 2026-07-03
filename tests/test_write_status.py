@@ -171,3 +171,95 @@ def test_stop_waits_out_stale_sentinel_when_fresh_one_still_flushing(
     status = json.loads((tmp_path / "beta" / "status.json").read_text())
     assert status["state"] == "done"
     assert status["summary"] == "spec created"
+
+
+# --- v2: sentinel-transition notify + ASK sentinel ---------------------------
+
+def _jmsg(text: str) -> str:
+    return json.dumps({"type": "assistant",
+                       "message": {"content": [{"type": "text", "text": text}]}})
+
+
+def _notify_setup(monkeypatch, tmp_path: Path):
+    """Fake messaging.RUN/SLEEP; route notifications to agent 'lead'."""
+    from orchestra import messaging, write_status
+    calls: list[list[str]] = []
+
+    class R:
+        returncode = 0
+        stdout = "❯ \n"
+        stderr = ""
+
+    monkeypatch.setattr(messaging, "RUN", lambda cmd, **kw: (calls.append(list(cmd)), R())[1])
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    monkeypatch.setattr(write_status, "SLEEP", lambda s: None)
+    return calls
+
+
+def test_new_sentinel_notifies_lead(tmp_path: Path, monkeypatch) -> None:
+    calls = _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("DONE: parser built") + "\n")
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    inbox = (tmp_path / "lead" / "inbox.md").read_text()
+    assert "w1" in inbox.lower() and "DONE: parser built" in inbox
+    assert any(c[:2] == ["tmux", "send-keys"] for c in calls)
+
+
+def test_same_sentinel_not_renotified(tmp_path: Path, monkeypatch) -> None:
+    calls = _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("DONE: parser built") + "\n")
+    ev = {"hook_event_name": "Stop", "transcript_path": str(p)}
+    handle_event("w1", ev, tmp_path, notify_target="lead", session="orchestra")
+    n_first = len([c for c in calls if c[:2] == ["tmux", "send-keys"]])
+    handle_event("w1", ev, tmp_path, notify_target="lead", session="orchestra")
+    n_second = len([c for c in calls if c[:2] == ["tmux", "send-keys"]])
+    assert n_first > 0
+    assert n_second == n_first  # dedupe: no new keystrokes for an old sentinel
+
+
+def test_second_distinct_sentinel_notifies_again(tmp_path: Path, monkeypatch) -> None:
+    calls = _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("BLOCKED: need spec") + "\n")
+    ev = {"hook_event_name": "Stop", "transcript_path": str(p)}
+    handle_event("w1", ev, tmp_path, notify_target="lead", session="orchestra")
+    n1 = len([c for c in calls if c[:2] == ["tmux", "send-keys"]])
+    p.write_text(p.read_text() + _jmsg("DONE: resolved") + "\n")
+    handle_event("w1", ev, tmp_path, notify_target="lead", session="orchestra")
+    n2 = len([c for c in calls if c[:2] == ["tmux", "send-keys"]])
+    assert n2 > n1
+
+
+def test_no_notify_without_target(tmp_path: Path, monkeypatch) -> None:
+    calls = _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("DONE: x") + "\n")
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    assert not calls
+
+
+def test_ask_sentinel_keeps_working_and_records_question(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("ASK: should the endpoint return 404 or empty list?") + "\n")
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "working"
+    assert status["needs"] == "lead_input"
+    assert "404" in status["question"]
+    assert "404" in (tmp_path / "lead" / "inbox.md").read_text()
+
+
+def test_ask_then_done_resolves_to_done(tmp_path: Path, monkeypatch) -> None:
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jmsg("ASK: which db?") + "\n" + _jmsg("DONE: used dev db") + "\n")
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    assert json.loads((tmp_path / "w1" / "status.json").read_text())["state"] == "done"

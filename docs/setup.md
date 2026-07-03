@@ -5,7 +5,7 @@
 ```bash
 cd /home/tusk/projects/orchestra
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest   # 24 tests should pass
+.venv/bin/pytest   # full suite should pass
 
 # Confirm subscription auth (no API key):
 unset ANTHROPIC_API_KEY
