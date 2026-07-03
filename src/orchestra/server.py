@@ -119,6 +119,10 @@ def spawn_agent(name: str, task_prompt: str, workdir: str,
 
     hook_cmd = f"{PYTHON} {shlex.quote(str(HOOK_HANDLER))} {shlex.quote(name)}"
     settings = json.dumps({
+        # Auto-approve project-scope .mcp.json (the lead's worktree carries
+        # one so it can spawn workers); an approval dialog would wedge the
+        # session exactly like the folder-trust prompt did.
+        "enableAllProjectMcpServers": True,
         "hooks": {
             "Stop": [{"hooks": [{"type": "command", "command": hook_cmd}]}],
             "PostToolUse": [{"matcher": "Write|Edit|Bash",
