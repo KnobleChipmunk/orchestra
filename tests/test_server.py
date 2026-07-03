@@ -273,3 +273,11 @@ def test_spawn_enables_project_mcp_servers(fake: FakeRun) -> None:
     _spawn()
     launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
     assert "enableAllProjectMcpServers" in launch
+
+
+def test_spawn_preapproves_orchestrator_mcp_tools(fake: FakeRun) -> None:
+    # acceptEdits does not cover MCP tools; without an allowlist entry the
+    # lead wedges on a permission dialog at its first orchestrator call.
+    _spawn()
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "mcp__claude-orchestrator" in launch

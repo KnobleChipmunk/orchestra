@@ -146,7 +146,10 @@ def spawn_agent(name: str, task_prompt: str, workdir: str,
         f"claude --settings {shlex.quote(settings)} "
         f"--model {shlex.quote(model)} "
         f"--permission-mode acceptEdits "
-        f'--allowedTools "Read,Write,Edit,Bash"'
+        # mcp__claude-orchestrator pre-approves the orchestrator MCP tools for
+        # lead sessions — acceptEdits does not cover MCP calls and a
+        # permission dialog wedges unattended agents.
+        f'--allowedTools "Read,Write,Edit,Bash,mcp__claude-orchestrator"'
     )
     target = f"{TMUX_SESSION}:{name}"
     RUN(["tmux", "new-window", "-t", TMUX_SESSION, "-n", name, launch], check=True)
