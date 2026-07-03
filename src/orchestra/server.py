@@ -89,13 +89,16 @@ def _ensure_session() -> None:
         RUN(["tmux", "new-session", "-d", "-s", TMUX_SESSION, "-n", "home"], check=True)
 
 
-def spawn_agent(name: str, task_prompt: str, workdir: str) -> str:
+def spawn_agent(name: str, task_prompt: str, workdir: str,
+                model: str = "sonnet", notify_target: str | None = None) -> str:
     """Launch a Claude Code worker in its own tmux window.
 
     name: unique agent id (e.g. 'alpha'). task_prompt: the scoped subtask
     including the status protocol. workdir: absolute WSL path (must be a git
-    worktree so agents never share files). Returns immediately; poll
-    get_agent_status for progress.
+    worktree so agents never share files). model: claude model alias
+    ('sonnet' for workers, 'opus' for the lead). notify_target: agent name
+    whose inbox/pane gets nudged when this agent emits a sentinel.
+    Returns immediately; poll get_agent_status for progress.
     """
     sp = AGENTS_DIR / name / "status.json"
     if sp.exists():
@@ -123,11 +126,21 @@ def spawn_agent(name: str, task_prompt: str, workdir: str) -> str:
         }
     })
 
+    # Env the hook handler needs (it runs inside the worker's environment).
+    env_prefix = (
+        f"ORCHESTRA_AGENTS_DIR={shlex.quote(str(AGENTS_DIR))} "
+        f"ORCHESTRA_TMUX_SESSION={shlex.quote(TMUX_SESSION)} "
+    )
+    if notify_target:
+        env_prefix += f"ORCHESTRA_NOTIFY_TARGET={shlex.quote(notify_target)} "
+
     # Bare interactive claude: no stdin redirect and no stdout pipe — either
     # would break the interactive TUI. Task is delivered by send-keys below.
     launch = (
         f"cd {shlex.quote(workdir)} && "
+        f"{env_prefix}"
         f"claude --settings {shlex.quote(settings)} "
+        f"--model {shlex.quote(model)} "
         f"--permission-mode acceptEdits "
         f'--allowedTools "Read,Write,Edit,Bash"'
     )

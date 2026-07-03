@@ -236,3 +236,31 @@ def test_send_to_agent_sends_enter_separately(fake: FakeRun, monkeypatch) -> Non
     assert len(sends) == 2
     assert "Enter" not in sends[0]
     assert sends[1][-1] == "Enter" and "commit this" not in " ".join(sends[1])
+
+
+# --- v2: model selection and notify plumbing ---------------------------------
+
+def test_spawn_passes_default_sonnet_model(fake: FakeRun) -> None:
+    _spawn()
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "--model sonnet" in launch
+
+
+def test_spawn_model_override_for_lead(fake: FakeRun) -> None:
+    server.spawn_agent("lead", "coordinate", "/wt", model="opus")
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "--model opus" in launch
+
+
+def test_spawn_injects_notify_and_config_env(fake: FakeRun) -> None:
+    server.spawn_agent("w1", "task", "/wt", notify_target="lead")
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "ORCHESTRA_NOTIFY_TARGET=lead" in launch
+    assert "ORCHESTRA_TMUX_SESSION=" in launch
+    assert "ORCHESTRA_AGENTS_DIR=" in launch
+
+
+def test_spawn_without_notify_target_sets_no_notify_env(fake: FakeRun) -> None:
+    _spawn()
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    assert "ORCHESTRA_NOTIFY_TARGET" not in launch
