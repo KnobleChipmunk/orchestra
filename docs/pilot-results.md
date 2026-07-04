@@ -122,3 +122,61 @@ watchdog live-validated in production (woke the lead 5.5 min after d5's
 lost nudge); docs spot-check accurate. respawn_agent is unit-tested (d2,
 TDD) — live kill/resume drill deferred to Phase E operations. Every worker's
 end state all phase was a sentinel; zero mystery idles.
+
+---
+
+# Phase E Results — first production sprint (2026-07-03/04, budget-buddy)
+
+**Verdict: SUCCESS.** A ten-issue tiered backlog on a real repo (personal
+financial data) was executed end-to-end by one Opus lead (914k context at
+retirement) driving ~14 Sonnet workers: 13 PRs merged, 8 issues closed, 2
+bugs found-and-fixed beyond the request, 2 discovered issues filed, 3
+emergent improvements shipped. Every stop condition held: design decisions
+escalated (5 questions before starting), real-DB writes dry-run + backed up
++ individually approved, credentials never touched, dependency order kept.
+Residual open items were time-gated or awaiting-requester, not failed work.
+
+## Failure classes found in production (all fixed, with regression tests)
+
+1. **Human Enter loss is systematic.** Every one of the requester's typed
+   pane replies (8+) parked unsubmitted — the TUI ignores a bare Enter after
+   any pause. Fixes: `scripts/say.py` (verified-submit reply channel) and
+   the **unstick loop** (`scripts/unstick.py` in tmux window `unstick`):
+   force-submits a draft unchanged for 10+ minutes; in-progress typing
+   restarts the clock. First live catch within 15 minutes of deployment; a
+   parked draft had previously stalled the board for 3 hours overnight.
+2. **Agent self-nudges deadlock the channel** (typing intent into one's own
+   pane parks it, and the draft guard then suppresses all nudges). Banned in
+   LEAD.md; unstick is the backstop.
+3. **Silent completion without notify_target** — one worker (i7) was
+   spawned without it and finished invisibly. Rule: notify_target is
+   mandatory on every spawn (make it default-on in spawn_agent — filed as
+   follow-up).
+4. **Instruction eclipse under conversation load** — a standing task
+   (issue closures) slipped for three turns because each turn answered only
+   the newest inbox thread. Mitigation: single-purpose messages; durable
+   fix: the lead keeps a standing TODO file on the blackboard (LEAD.md).
+5. **Supervisor false escalations (CC's own, twice).** CC flagged the lead
+   for "unauthorized" merges the requester had authorized directly in the
+   pane, and "corrected" it that the `ant` CLI doesn't exist (it does —
+   official Anthropic CLI). Rule: before correcting an agent, read the full
+   instruction channel (its transcript's user messages) and verify facts
+   against authoritative reference. The agent that read the source may be
+   right.
+
+## What the architecture proved
+
+- Opus-lead / Sonnet-worker split: ~3M tokens total (estimate) for 13
+  reviewed PRs; lead never wrote feature code, caught real issues in review
+  (spawned i23b as a follow-up rather than rubber-stamping).
+- The delivery stack is now defense-in-depth and every layer was validated
+  by a real incident: verified submit → next-delivery self-heal → watchdog
+  re-nudge → unstick stale-draft submit.
+- Requester-in-the-loop worked as designed: 5 pre-start questions, per-write
+  approvals, live policy renegotiation (merge authority) — all honored.
+
+## Retirement
+
+Lead retired at 914k/1M context after the sprint wrapped. Durable state
+(blackboard, LEAD.md, GitHub issues/PRs, this doc) carries everything; the
+next assignment starts with a fresh lead.

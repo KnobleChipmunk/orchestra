@@ -280,3 +280,20 @@ Observe:
 - `tmux attach -t orchestra` — one window per agent (Ctrl-b n to cycle)
 - `watch -n1 cat /home/tusk/agents/beta/status.json` — state flip
 - `tail -f /home/tusk/agents/alpha/agent.log`
+
+
+## Appendix: operator tools and quirks (Phase E learnings)
+
+- **Reply to an agent reliably**: `.venv/bin/python scripts/say.py lead "<reply>"`
+  — types into the pane with verified submission. Typing directly in the pane
+  works, but the TUI silently ignores a bare Enter after any pause; if your
+  Enter does nothing, type a space then Enter (or just use say.py).
+- **Unstick loop**: run alongside the watchdog —
+  `tmux new-window -d -t orchestra -n unstick 'while true; do <repo>/.venv/bin/python <repo>/scripts/unstick.py lead 600; sleep 60; done'`
+  — force-submits any lead-pane draft unchanged for 10+ minutes.
+- **Multiline messages from a shell**: quote with a literal heredoc so dashes
+  and apostrophes survive:
+  `scripts/agent_msg.py lead "$(cat <<'EOF' ... EOF)"`.
+- **Watchdog + unstick both run in their own tmux windows** and should be
+  wrapped in a restart loop; a crashed watchdog silently removes the stall
+  backstop (it died once in Phase D/E).
