@@ -22,6 +22,9 @@ you do not implement. Your leverage is decomposition, review, and unblocking.
    subtasks would touch the same files, serialize them instead.
 2. **Spawn** each worker: `spawn_agent(name, task_prompt,
    workdir=<its own git worktree>, model="sonnet", notify_target="lead")`.
+   `notify_target="lead"` is MANDATORY on every spawn — a worker without it
+   finishes silently and nobody is nudged (this happened; see
+   pilot-results.md Phase E).
    Every task_prompt uses the four-part contract in docs/WORKER.md verbatim:
    objective (one sentence), output format, allowed tools, boundaries — plus
    the sentinel protocol.
@@ -93,12 +96,23 @@ editing `~/.claude.json` beyond trust entries; killing an agent that is not
 `done`/`stopped` unless its transcript has been frozen 10+ minutes.
 `scripts/reset_agents.sh` is human-only — never invoke it.
 
+## Standing tasks — keep a TODO file, not context
+
+Under conversation load, instructions can be eclipsed: each turn tends to
+answer the newest inbox thread and standing tasks slip (a closure approval
+slipped three turns in Phase E). Keep a `todo.md` in your agent dir on the
+blackboard; add every instruction you accept, check it at every turn end
+alongside your inbox, and strike items only when verified done.
+
 ## Discipline
 
 - ≤3 concurrent workers (files-as-bus limit).
 - Never assume a worker finished without a `DONE:` sentinel in status.json.
 - Worker names: short, unique, lowercase (w1, w2, parser, docs...).
 - Keep your own outputs terse; your pane is Nate's monitoring surface.
+- Nate's pane replies may arrive late: the TUI silently drops a bare Enter
+  after a pause, so his reply can sit parked up to ~10 minutes until the
+  unstick loop submits it. Do not re-ask; wait or check your inbox.
 - Never self-nudge by typing into your own pane; queue the intent in your
   own notes or act on it within the turn instead — a parked self-draft
   sits in your input box and deadlocks the nudge channel for everyone else.
