@@ -11,6 +11,7 @@ Delivery contract (the only messaging pattern in the system):
      target's prompt line, the keystroke nudge is SKIPPED — the inbox write
      stands, and the watchdog / turn-end inbox check picks it up.
 """
+import json
 import logging
 import subprocess
 import time
@@ -96,6 +97,39 @@ def type_into(pane: str, text: str) -> str:
         _force_submit(pane)
         return f"Typed into {pane} (needed a submit retry)."
     return f"Typed into {pane}."
+
+
+def unstick_if_stale(pane: str, state_path: Path, max_age_s: float,
+                     now: float | None = None) -> str:
+    """Force-submit a pane draft that has sat unchanged past max_age_s.
+
+    Human Enters are silently swallowed by the TUI (observed repeatedly);
+    a parked draft blocks the nudge channel indefinitely — one blocked the
+    lead for three hours overnight. Called periodically by the watchdog.
+    Tracks the last-seen draft in state_path; a changed draft restarts the
+    clock so nobody's in-progress typing is ever submitted.
+    """
+    if now is None:
+        now = time.time()
+    draft = pane_draft_text(pane)
+    if not draft:
+        if state_path.exists():
+            state_path.unlink()
+        return "empty box; nothing to do."
+    prev = {}
+    if state_path.exists():
+        try:
+            prev = json.loads(state_path.read_text())
+        except json.JSONDecodeError:
+            prev = {}
+    if prev.get("draft") == draft:
+        if now - prev.get("first_seen", now) >= max_age_s:
+            _force_submit(pane)
+            state_path.unlink(missing_ok=True)
+            return f"submitted stale draft ({int(max_age_s)}s+ unchanged): {draft[:60]!r}"
+        return "draft unchanged; waiting out the age threshold."
+    state_path.write_text(json.dumps({"draft": draft, "first_seen": now}))
+    return "new draft recorded; clock started."
 
 
 def _force_submit(pane: str) -> None:

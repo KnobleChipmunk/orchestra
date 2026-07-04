@@ -217,3 +217,45 @@ def test_type_into_refuses_over_existing_draft(monkeypatch, tmp_path: Path) -> N
     result = messaging.type_into("orchestra:lead", "new text")
     assert "draft" in result.lower()
     assert not any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
+
+
+# --- stale-draft auto-submit (unstick) ---------------------------------------
+
+def test_unstick_submits_draft_unchanged_beyond_threshold(
+    monkeypatch, tmp_path: Path
+) -> None:
+    f = SequenceRun([_tui("finished reply that lost its Enter"), _tui("")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    state = tmp_path / "unstick_state.json"
+    # First observation: records draft, does not submit
+    r1 = messaging.unstick_if_stale("orchestra:lead", state, max_age_s=600, now=1000.0)
+    assert "recorded" in r1.lower()
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
+    # Same draft 11 minutes later: submit
+    f.pane_texts = [_tui("finished reply that lost its Enter"), _tui("")]
+    r2 = messaging.unstick_if_stale("orchestra:lead", state, max_age_s=600, now=1660.0)
+    assert "submitted" in r2.lower()
+    sends = [c[-1] for c in f.calls if c[:2] == ["tmux", "send-keys"]]
+    assert sends == [" ", "Enter"]
+
+
+def test_unstick_resets_when_draft_changes(monkeypatch, tmp_path: Path) -> None:
+    f = SequenceRun([_tui("first draft")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    state = tmp_path / "s.json"
+    messaging.unstick_if_stale("orchestra:lead", state, max_age_s=600, now=0.0)
+    f.pane_texts = [_tui("second draft - still typing")]
+    r = messaging.unstick_if_stale("orchestra:lead", state, max_age_s=600, now=1200.0)
+    assert "recorded" in r.lower()  # changed draft restarts the clock
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
+
+
+def test_unstick_noop_on_empty_box(monkeypatch, tmp_path: Path) -> None:
+    f = SequenceRun([_tui("")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    r = messaging.unstick_if_stale("orchestra:lead", tmp_path / "s.json", max_age_s=600, now=0.0)
+    assert "empty" in r.lower()
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
