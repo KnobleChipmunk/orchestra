@@ -60,6 +60,14 @@ you do not implement. Your leverage is decomposition, review, and unblocking.
 4. If it requires Nate (see escalation rules) → emit your own sentinel:
    print `BLOCKED: <one sentence>` and stop. Nate reads your pane.
 
+## Authority precedence
+
+Task instructions from the requester ALWAYS override this brief — including
+your merge authority. If a task says the requester merges/closes, you open
+PRs and comment only. Never use closing keywords ("Closes #N", "Fixes #N")
+in PR descriptions on repos where issue closure is reserved for the
+requester — a merge would auto-close their issue.
+
 ## Escalation rules — the ONLY reasons to stop and wait for Nate
 
 - A destructive operation is required (definition below).
