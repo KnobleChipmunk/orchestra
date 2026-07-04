@@ -79,3 +79,46 @@ and argues for the lead's turn-end inbox check being non-negotiable.
 
 Two mid-run code fixes (above) plus one delivery assist caused by the parked
 draft. Zero coaching of decomposition, spawning, monitoring, or review.
+
+---
+
+# Phase D Results — self-bootstrapping build (2026-07-03)
+
+**Verdict: COMPLETE. All five packages built by the system itself — LEAD
+decomposed, spawned Sonnet workers, reviewed, and merged every PR (#10–#12,
+#14, #15). Suite grew 59 → 101 tests, all green, ruff+mypy clean.**
+
+| Package | Worker | PR | Interventions |
+|---|---|---|---|
+| D1 dashboard | d1 | #10 | 0 |
+| D2 respawn + stop-guard | d2 | #11 | 0 |
+| D3 inbox hygiene | d3 | #12 | 0 |
+| D4 watchdog + self-nudge rule | d4 | #14 | 1 (lost DONE nudge re-sent by CC; watchdog did not exist yet) |
+| D5 docs refresh | d5 | #15 | 0 — the lost nudge was caught by the D4 watchdog in production |
+
+Average interventions 0.2/package (acceptance bar: ≤1). The lead also
+self-initiated correct behaviors nobody asked for: fresh worktrees from main
+per worker, PR-based merges for the toy branches, post-merge worker cleanup.
+
+## New failure class found: agent self-nudges
+
+All "mystery drafts" this session were the LEAD typing next-step intents
+into its own pane, where the lost-Enter behavior parked them and the draft
+guard then (correctly) suppressed all incoming nudges — deadlock. Fixes:
+LEAD.md now bans self-nudging (merged in #14), and the watchdog's
+unprocessed-report sweep breaks any residual stall.
+
+## Also fixed mid-phase (infrastructure, not lead conduct)
+
+- Stale-DONE re-detection: a sentinel-less turn re-detected the previous
+  turn's DONE from history; Stop-state now scopes to the turn's final
+  assistant message (PR #13).
+
+## Validation sweep
+
+Dashboard renders all agents one-screen; stop_agent refuses a dirty
+worktree with a clear message; inbox read_new/mark_processed round-trips;
+watchdog live-validated in production (woke the lead 5.5 min after d5's
+lost nudge); docs spot-check accurate. respawn_agent is unit-tested (d2,
+TDD) — live kill/resume drill deferred to Phase E operations. Every worker's
+end state all phase was a sentinel; zero mystery idles.
