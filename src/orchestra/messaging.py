@@ -78,6 +78,26 @@ def deliver(target: str, message: str, sender: str, agents_dir: Path,
     return f"Delivered to '{target}' and nudged."
 
 
+def type_into(pane: str, text: str) -> str:
+    """Type text directly into a pane's prompt with verified submission.
+
+    For human/operator replies (scripts/say.py). Refuses if a different draft
+    already occupies the input box; retries via _force_submit if the TUI
+    parks the text (bare-Enter-after-pause is ignored on a stale box).
+    """
+    existing = pane_draft_text(pane)
+    if existing and existing != text:
+        return f"Refusing: a different draft is parked in {pane}: {existing!r}"
+    RUN(["tmux", "send-keys", "-t", pane, text])
+    SLEEP(SUBMIT_DELAY_S)
+    RUN(["tmux", "send-keys", "-t", pane, "Enter"])
+    SLEEP(SUBMIT_DELAY_S)
+    if pane_draft_text(pane):
+        _force_submit(pane)
+        return f"Typed into {pane} (needed a submit retry)."
+    return f"Typed into {pane}."
+
+
 def _force_submit(pane: str) -> None:
     """Submit whatever sits in the input box: fresh keystroke, then Enter."""
     RUN(["tmux", "send-keys", "-t", pane, " "])

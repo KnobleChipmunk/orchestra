@@ -186,3 +186,34 @@ def test_deliver_no_retry_when_submission_verified(
     _deliver(f, tmp_path)
     sends = [c[-1] for c in f.calls if c[:2] == ["tmux", "send-keys"]]
     assert sends == [messaging.NUDGE_LINE, "Enter"]
+
+
+# --- type_into: verified direct typing (for human replies to a pane) ---------
+
+def test_type_into_sends_text_then_enter_and_verifies(
+    monkeypatch, tmp_path: Path
+) -> None:
+    f = SequenceRun([_tui(""), _tui("")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    messaging.type_into("orchestra:lead", "Approve and continue")
+    sends = [c[-1] for c in f.calls if c[:2] == ["tmux", "send-keys"]]
+    assert sends == ["Approve and continue", "Enter"]
+
+
+def test_type_into_retries_when_text_still_parked(monkeypatch, tmp_path: Path) -> None:
+    f = SequenceRun([_tui(""), _tui("Approve and continue"), _tui("")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    messaging.type_into("orchestra:lead", "Approve and continue")
+    sends = [c[-1] for c in f.calls if c[:2] == ["tmux", "send-keys"]]
+    assert sends[-2:] == [" ", "Enter"]  # force-submit retry
+
+
+def test_type_into_refuses_over_existing_draft(monkeypatch, tmp_path: Path) -> None:
+    f = SequenceRun([_tui("someone elses draft")])
+    monkeypatch.setattr(messaging, "RUN", f)
+    monkeypatch.setattr(messaging, "SLEEP", lambda s: None)
+    result = messaging.type_into("orchestra:lead", "new text")
+    assert "draft" in result.lower()
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in f.calls)
