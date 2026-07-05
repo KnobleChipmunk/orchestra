@@ -55,6 +55,14 @@ Event body (matches disler's server schema — verified against the repo):
    The variable inherits from each worker's environment, so you toggle the
    dashboard globally — no need to re-spawn agents.
 
+Once cloned, you don't need to run `start-system.sh` by hand every session:
+`scripts/up.py` (in the orchestra repo) starts it for you in its own tmux
+window (`orchestra:obs`) alongside the lead and watchdog/unstick loops,
+polling until both ports answer — or reporting `FAILED` with the window
+name to inspect (`tmux capture-pane -t orchestra:obs -p`) if it never comes
+up. Pass `--no-dashboard` to `scripts/up.py` to run orchestra without the
+dashboard at all.
+
 ## Fire-and-forget guarantee
 
 Emission must never block, slow, or fail an agent's turn — this is the

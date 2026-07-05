@@ -20,6 +20,16 @@ claude /status
 
 ## 2. Bootstrap the lead
 
+**Fast path:** once the lead's worktree exists (one-time setup below), run
+`.venv/bin/python scripts/up.py` any time to (re)start everything — the
+tmux session, the observability dashboard, the lead, and the
+watchdog/unstick loops — safely: it's strictly additive to tmux and never
+touches an already-running window, so it's fine to run against a live
+session. Pass `--no-dashboard` to skip the observability UI, or `--dry-run`
+to preview what would start without touching anything. The manual steps
+below are what `up.py` does under the hood, and remain useful for
+troubleshooting or bootstrapping the lead's worktree from scratch.
+
 The lead is an agent like any other — spawned by `spawn_agent` into its own
 tmux window and git worktree — with one difference: it's the one agent whose
 worktree carries a project-scope `.mcp.json` so its own Claude Code session
