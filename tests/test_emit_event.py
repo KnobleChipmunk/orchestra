@@ -88,3 +88,36 @@ def test_malformed_stdin_never_posts(fake_urlopen, monkeypatch) -> None:
     monkeypatch.delenv("ORCHESTRA_EVENTS_URL", raising=False)
     emit_event.run("alpha", "this is not json {")
     assert fake_urlopen.calls == []
+
+
+# --- emit(): the detach layer (fork seam patched — no real forks in tests) ---
+
+class _Exited(Exception):
+    """Stand-in for os._exit so the child branch can be observed in-process."""
+
+
+def test_emit_parent_path_never_posts(fake_urlopen, monkeypatch) -> None:
+    monkeypatch.delenv("ORCHESTRA_EVENTS_URL", raising=False)
+    monkeypatch.setattr(emit_event, "_detach", lambda: False)  # we are the parent
+    emit_event.emit("alpha", json.dumps({"hook_event_name": "Stop"}))
+    assert fake_urlopen.calls == []  # parent returns instantly, POST is the child's job
+
+
+def test_emit_child_path_posts(fake_urlopen, monkeypatch) -> None:
+    monkeypatch.delenv("ORCHESTRA_EVENTS_URL", raising=False)
+    monkeypatch.setattr(emit_event, "_detach", lambda: True)  # we are the detached child
+    monkeypatch.setattr(emit_event.os, "_exit",
+                        lambda code: (_ for _ in ()).throw(_Exited()))
+    with pytest.raises(_Exited):
+        emit_event.emit("alpha", json.dumps({"hook_event_name": "PreToolUse"}))
+    assert len(fake_urlopen.calls) == 1
+    assert fake_urlopen.calls[0][1]["hook_event_type"] == "PreToolUse"
+
+
+def test_emit_disabled_skips_detach_entirely(fake_urlopen, monkeypatch) -> None:
+    monkeypatch.setenv("ORCHESTRA_EVENTS_URL", "")
+    detached = []
+    monkeypatch.setattr(emit_event, "_detach", lambda: detached.append(True) or True)
+    emit_event.emit("alpha", json.dumps({"hook_event_name": "Stop"}))
+    assert detached == []          # no fork attempted when disabled
+    assert fake_urlopen.calls == []

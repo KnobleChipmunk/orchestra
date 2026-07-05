@@ -8,6 +8,12 @@ anything here. Fire-and-forget: stdlib urllib only, short timeout, every
 exception swallowed, always exit 0. A dead or absent dashboard must never
 block, slow, or fail an agent's turn.
 
+The POST is performed in a DETACHED background process (double-fork): the hook
+process returns to Claude Code immediately, so even a black-holed dashboard
+adds zero latency to the agent's turn. This matters on WSL2, where a connect
+to an unbound localhost port black-holes for the full timeout rather than
+refusing quickly — see docs/observability.md.
+
 Usage (wired via --settings at spawn): emit_event.py <agent_name>
 """
 import json
@@ -65,7 +71,11 @@ def post(url: str, body: dict) -> None:
 
 def run(name: str, stdin_text: str) -> None:
     """Parse stdin, build the event, POST it — swallowing every failure so a
-    dead dashboard can never affect the agent's turn."""
+    dead dashboard can never affect the agent's turn.
+
+    Pure and in-process (no forking): the unit of work a detached child runs,
+    and the seam the behavior tests drive directly.
+    """
     url = resolve_url()
     if url is None:
         return
@@ -81,10 +91,53 @@ def run(name: str, stdin_text: str) -> None:
         pass
 
 
+def _detach() -> bool:
+    """Double-fork a fully detached grandchild to carry the POST.
+
+    Returns True in the grandchild (which should perform the POST and then
+    exit), False in the original process (which should return immediately).
+    Seam for tests: patched to avoid real forks.
+
+    The grandchild redirects stdin/stdout/stderr to /dev/null so the hook's
+    stdout pipe reaches EOF when the parent exits — otherwise Claude Code would
+    block waiting on the fd the grandchild inherited, re-introducing the stall
+    detaching is meant to remove.
+    """
+    if os.fork() > 0:
+        # Original process: reap the immediately-exiting first child (no
+        # zombie) and return so the hook completes at once.
+        os.wait()
+        return False
+    os.setsid()
+    if os.fork() > 0:
+        os._exit(0)  # first child exits; grandchild is orphaned to init
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    return True
+
+
+def emit(name: str, stdin_text: str) -> None:
+    """Entry point: detach, then POST in the background grandchild.
+
+    The parent returns instantly; the grandchild does the (possibly slow) POST
+    and exits. Disabled emission short-circuits before any fork.
+    """
+    if resolve_url() is None:
+        return
+    if not _detach():
+        return
+    try:
+        run(name, stdin_text)
+    finally:
+        os._exit(0)
+
+
 def main() -> None:
     name = sys.argv[1] if len(sys.argv) > 1 else "unknown"
     try:
-        run(name, sys.stdin.read())
+        emit(name, sys.stdin.read())
     except Exception:
         pass
     # Exit 0 = allow the Stop/tool to proceed normally (hook stdout protocol).

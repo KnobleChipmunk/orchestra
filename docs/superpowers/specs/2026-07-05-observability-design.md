@@ -1,8 +1,38 @@
 # Design: Live observability layer for orchestra agents
 
 **Date:** 2026-07-05
-**Status:** Approved (design) — pending spec review
+**Status:** Approved; **amended 2026-07-05** (see "Amendment" below)
 **Branch:** `worktree-feature+observability`
+
+## Amendment 2026-07-05 — detached emission (supersedes "synchronous POST")
+
+The original design POSTed synchronously with a ≤2s timeout, on the assumption
+that a **down** dashboard refuses instantly (~ms) and only a black-holed host
+hits the timeout. **Measurement on the real WSL2 deployment host disproved
+this:** a connect to an unbound `localhost:4000` (and explicit `127.0.0.1:4000`)
+**black-holes for the full timeout** rather than refusing — WSL2 loopback
+behavior. So "down" == "timeout", the normal case, not an edge case.
+
+Measured per-hook cost (this WSL2 box, `TIMEOUT_S = 2.0`):
+
+| Dashboard state | Synchronous POST | **Detached (adopted)** |
+| --- | --- | --- |
+| UP (listening) | ~0.8 ms | ~0.8 ms (child); hook returns ~20–30 ms |
+| DOWN (nothing bound) | **~2000 ms** | **~20–30 ms** (hook process) |
+
+With all-tools Pre+Post breadth, the synchronous down-case added ~4s **per tool
+call** — silently violating the package's load-bearing constraint ("a dead/absent
+dashboard must never block, slow, or fail an agent's turn") and the "orchestra
+runs identically without it" promise, unless an operator remembered to set
+`ORCHESTRA_EVENTS_URL=""`.
+
+**Decision:** the POST runs in a **detached background process** (double-fork +
+`setsid` + std-fd redirect to `/dev/null`). The hook process returns to Claude
+Code immediately; the orphaned grandchild carries the (possibly slow) POST and
+exits. `TIMEOUT_S` stays 2.0 — it now only bounds the orphaned child, never the
+turn. The fork is isolated behind a `_detach()` seam (patched in tests, so
+`run()` still asserts POST behavior in-process). This is the only change from
+the approved design; the schema, wiring, env config, and breadth are unchanged.
 
 ## Goal
 
