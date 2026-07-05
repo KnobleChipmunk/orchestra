@@ -26,6 +26,7 @@ logger = logging.getLogger("orchestra.server")
 AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
 TMUX_SESSION = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
 HOOK_HANDLER = Path(__file__).resolve().parent / "write_status.py"
+EMIT_HANDLER = Path(__file__).resolve().parent / "emit_event.py"
 PYTHON = sys.executable
 STARTUP_DELAY_S = 8  # give claude time to boot before send-keys delivers the task
 CLAUDE_JSON = Path.home() / ".claude.json"
@@ -104,15 +105,30 @@ def _launch_claude_window(name: str, workdir: str, model: str,
     log = d / "agent.log"
 
     hook_cmd = f"{PYTHON} {shlex.quote(str(HOOK_HANDLER))} {shlex.quote(name)}"
+    emit_cmd = f"{PYTHON} {shlex.quote(str(EMIT_HANDLER))} {shlex.quote(name)}"
     settings = json.dumps({
         # Auto-approve project-scope .mcp.json (the lead's worktree carries
         # one so it can spawn workers); an approval dialog would wedge the
         # session exactly like the folder-trust prompt did.
         "enableAllProjectMcpServers": True,
         "hooks": {
-            "Stop": [{"hooks": [{"type": "command", "command": hook_cmd}]}],
-            "PostToolUse": [{"matcher": "Write|Edit|Bash",
-                             "hooks": [{"type": "command", "command": hook_cmd}]}],
+            # emit_event mirrors every hook to the observability dashboard,
+            # fire-and-forget, in its own process independent of the status
+            # write. Runs for ALL tools; write_status keeps its narrow matcher.
+            "PreToolUse": [
+                {"hooks": [{"type": "command", "command": emit_cmd}]},
+            ],
+            "Stop": [
+                {"hooks": [
+                    {"type": "command", "command": hook_cmd},
+                    {"type": "command", "command": emit_cmd},
+                ]},
+            ],
+            "PostToolUse": [
+                {"matcher": "Write|Edit|Bash",
+                 "hooks": [{"type": "command", "command": hook_cmd}]},
+                {"hooks": [{"type": "command", "command": emit_cmd}]},
+            ],
         }
     })
 
