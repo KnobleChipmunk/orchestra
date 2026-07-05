@@ -4,6 +4,7 @@ subprocess.run is faked (captured, never executed) — no test spawns tmux or
 claude. Status/inbox/log files are real files under tmp dirs.
 """
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,38 @@ def test_spawn_configures_status_hooks(fake: FakeRun) -> None:
     launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
     assert "--settings" in launch
     assert "write_status" in launch
+
+
+def _settings_of(launch: str) -> dict:
+    """Recover the --settings JSON dict embedded in a tmux launch command."""
+    toks = shlex.split(launch)
+    return json.loads(toks[toks.index("--settings") + 1])
+
+
+def test_spawn_wires_emit_event_on_all_three_hooks(fake: FakeRun) -> None:
+    _spawn()
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    hooks = _settings_of(launch)["hooks"]
+    assert "emit_event" in json.dumps(hooks["PreToolUse"])
+    assert "emit_event" in json.dumps(hooks["PostToolUse"])
+    assert "emit_event" in json.dumps(hooks["Stop"])
+
+
+def test_spawn_preserves_write_status_hooks_unchanged(fake: FakeRun) -> None:
+    _spawn()
+    launch = next(c for c in fake.calls if c[:2] == ["tmux", "new-window"])[-1]
+    hooks = _settings_of(launch)["hooks"]
+    # write_status still on Stop and ONLY on the narrow PostToolUse matcher.
+    assert "write_status" in json.dumps(hooks["Stop"])
+    post_groups = hooks["PostToolUse"]
+    narrow = next(g for g in post_groups if g.get("matcher") == "Write|Edit|Bash")
+    assert "write_status" in json.dumps(narrow)
+    assert all(
+        "write_status" not in json.dumps(g)
+        for g in post_groups if g.get("matcher") != "Write|Edit|Bash"
+    )
+    # PreToolUse is emit-only — never write_status.
+    assert "write_status" not in json.dumps(hooks["PreToolUse"])
 
 
 def test_spawn_logs_via_pipe_pane(fake: FakeRun) -> None:
