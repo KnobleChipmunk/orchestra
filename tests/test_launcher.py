@@ -359,7 +359,7 @@ def test_ensure_lead_absent_valid_worktree_calls_spawn_fn_once_with_expected_arg
     name, prompt, workdir, model = spawn_fn.calls[0]
     assert name == "lead"
     assert workdir == str(lead_wt)
-    assert model == "opus"
+    assert model == "fable"
     assert "LEAD BRIEF TEXT" in prompt
     assert "Await instructions" in prompt
 

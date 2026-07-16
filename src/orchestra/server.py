@@ -169,7 +169,7 @@ def spawn_agent(name: str, task_prompt: str, workdir: str,
     name: unique agent id (e.g. 'alpha'). task_prompt: the scoped subtask
     including the status protocol. workdir: absolute WSL path (must be a git
     worktree so agents never share files). model: claude model alias
-    ('sonnet' for workers, 'opus' for the lead). notify_target: agent name
+    ('sonnet' for workers, 'fable' for the lead). notify_target: agent name
     whose inbox/pane gets nudged when this agent emits a sentinel.
     Returns immediately; poll get_agent_status for progress.
     """

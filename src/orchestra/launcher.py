@@ -214,11 +214,11 @@ def ensure_lead(dry_run: bool, spawn_fn: SpawnFn | None = None) -> Result:
     prompt = LEAD_MD.read_text() + "\n\nAwait instructions from Nate in your pane."
 
     if dry_run:
-        return Result("lead", "STARTED", f"WOULD SPAWN lead in {LEAD_WT} (model=opus)")
+        return Result("lead", "STARTED", f"WOULD SPAWN lead in {LEAD_WT} (model=fable)")
 
     spawn = spawn_fn or _default_spawn_agent
     # notify_target intentionally omitted: the lead has nobody above it to notify.
-    outcome = spawn("lead", prompt, str(LEAD_WT), model="opus")
+    outcome = spawn("lead", prompt, str(LEAD_WT), model="fable")
 
     if outcome.startswith("Agent 'lead' already exists"):
         return Result("lead", "FAILED",
