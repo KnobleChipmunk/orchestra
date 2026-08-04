@@ -1,7 +1,7 @@
 # Glossary
 
 **Blackboard** — The filesystem directory tree at `$ORCHESTRA_AGENTS_DIR`
-(default `/home/tusk/agents`) that agents use as shared state instead of
+(default `/home/user/agents`) that agents use as shared state instead of
 direct calls: each agent gets `<name>/status.json`, `inbox.md`, `task.md`,
 and `agent.log`. It exists because every MCP tool must return instantly (the
 ~4-minute Desktop tool-call timeout), so the lead and workers coordinate by

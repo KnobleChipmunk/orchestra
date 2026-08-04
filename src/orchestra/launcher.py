@@ -36,7 +36,7 @@ class Result:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Mirrors server.py's AGENTS_DIR convention exactly, duplicated (not
 # imported) to keep this module stdlib-only at import time.
-AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
+AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
 TMUX_SESSION = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
 OBS_REPO = Path.home() / "projects" / "multi-agent-observability"
 SERVER_PORT = int(os.environ.get("SERVER_PORT", "4000"))
@@ -211,7 +211,7 @@ def ensure_lead(dry_run: bool, spawn_fn: SpawnFn | None = None) -> Result:
     if not LEAD_MD.exists():
         return Result("lead", "FAILED", f"{LEAD_MD} not found — cannot build the lead's prompt")
 
-    prompt = LEAD_MD.read_text() + "\n\nAwait instructions from Nate in your pane."
+    prompt = LEAD_MD.read_text() + "\n\nAwait instructions from the operator in your pane."
 
     if dry_run:
         return Result("lead", "STARTED", f"WOULD SPAWN lead in {LEAD_WT} (model=opus)")

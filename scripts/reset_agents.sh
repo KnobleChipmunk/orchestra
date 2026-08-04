@@ -6,7 +6,7 @@
 # rule). Refuses to touch dirty worktrees unless --force is given.
 set -euo pipefail
 
-AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/tusk/agents}"
+AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/user/agents}"
 SESSION="${ORCHESTRA_TMUX_SESSION:-orchestra}"
 FORCE="${1:-}"
 

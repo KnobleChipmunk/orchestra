@@ -23,7 +23,7 @@ from fastmcp import FastMCP
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("orchestra.server")
 
-AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
+AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
 TMUX_SESSION = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
 HOOK_HANDLER = Path(__file__).resolve().parent / "write_status.py"
 EMIT_HANDLER = Path(__file__).resolve().parent / "emit_event.py"

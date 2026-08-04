@@ -13,12 +13,12 @@ set -euo pipefail
 #   scripts/watchdog.sh --once   # run exactly one check cycle and exit
 #
 # Env:
-#   ORCHESTRA_AGENTS_DIR  blackboard root (default /home/tusk/agents)
+#   ORCHESTRA_AGENTS_DIR  blackboard root (default /home/user/agents)
 #   ORCHESTRA_NUDGE_CMD   command to invoke for nudges, called as
 #                         "$ORCHESTRA_NUDGE_CMD lead <reason>"
 #                         (default scripts/agent_msg.py)
 
-AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/tusk/agents}"
+AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/user/agents}"
 NUDGE_CMD="${ORCHESTRA_NUDGE_CMD:-scripts/agent_msg.py}"
 STALE_WORKING_S=600
 STALE_REPORT_S=300

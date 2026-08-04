@@ -29,7 +29,7 @@ def main() -> int:
         target=target,
         message=message,
         sender=os.environ.get("ORCHESTRA_AGENT_NAME", "peer"),
-        agents_dir=Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents")),
+        agents_dir=Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents")),
         session=os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra"),
     )
     print(result)

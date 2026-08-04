@@ -46,7 +46,7 @@ Bun + SQLite + Vue dashboard (adopted, not vendored).
 - Config env var: `ORCHESTRA_EVENTS_URL`, default `http://localhost:4000/events`;
   **empty string disables emission entirely**.
 - Run tests from the worktree with `PYTHONPATH=src` so the correct checkout is
-  validated: `source /home/tusk/projects/orchestra/.venv/bin/activate` then
+  validated: `source /home/user/projects/orchestra/.venv/bin/activate` then
   `PYTHONPATH=src python -m pytest ...`.
 - ruff line-length 100; type hints on every signature; `mypy src` clean.
 
@@ -62,7 +62,7 @@ put the design doc (already committed at `9bc1125`) and this plan under
 - Create: `docs/superpowers/plans/2026-07-05-observability.md` (copy of this plan)
 
 - [ ] **Step 1:** Copy this plan file into the repo:
-  `cp /home/tusk/.claude/plans/review-the-orchestra-repo-scalable-sphinx.md docs/superpowers/plans/2026-07-05-observability.md`
+  `cp /home/user/.claude/plans/review-the-orchestra-repo-scalable-sphinx.md docs/superpowers/plans/2026-07-05-observability.md`
 - [ ] **Step 2:** Commit:
 ```bash
 git add docs/superpowers/plans/2026-07-05-observability.md
@@ -500,7 +500,7 @@ step after Tasks 1-3 are green.
   guaranteed-unused port. Run from the worktree:
 
 ```bash
-source /home/tusk/projects/orchestra/.venv/bin/activate
+source /home/user/projects/orchestra/.venv/bin/activate
 # (a) dashboard NOT running -> connection refused, should be ~milliseconds
 PYTHONPATH=src ORCHESTRA_EVENTS_URL=http://localhost:4000/events python - <<'PY'
 import json, time
@@ -550,7 +550,7 @@ Record both numbers for the PR description.
 ## Verification
 
 - **Unit/regression (offline, authoritative):**
-  `source /home/tusk/projects/orchestra/.venv/bin/activate && PYTHONPATH=src python -m pytest -q && ruff check src tests && mypy src`
+  `source /home/user/projects/orchestra/.venv/bin/activate && PYTHONPATH=src python -m pytest -q && ruff check src tests && mypy src`
   — all green, existing 107 tests unaffected, ~8 new tests pass.
 - **Emitter behavior:** covered by `tests/test_emit_event.py` (happy path,
   timeout swallowed, connection-refused swallowed, disabled-via-env, custom URL,

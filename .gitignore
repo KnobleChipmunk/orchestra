@@ -1,5 +1,16 @@
+# Secrets and local environment
 .env
+.env.local
+.env.*.local
+!.env.example
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -8,3 +19,11 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Editor and OS cruft
+.DS_Store
+.vscode/
+.idea/
+
+# Runtime artifacts (agent panes/blackboard logs, if ever run in-tree)
+*.log

@@ -19,7 +19,7 @@ def main() -> int:
     agent = sys.argv[1]
     max_age = float(sys.argv[2]) if len(sys.argv) > 2 else 600.0
     session = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
-    agents_dir = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
+    agents_dir = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
     state = agents_dir / agent / "unstick_state.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     result = messaging.unstick_if_stale(f"{session}:{agent}", state, max_age_s=max_age)
