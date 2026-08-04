@@ -22,10 +22,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from orchestra import config
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestra.write_status")
 
-DEFAULT_AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
+DEFAULT_AGENTS_DIR = config.agents_dir()
 TAIL_BYTES = 4000
 REASON_MAX = 300
 # On Stop, the final assistant message may not be flushed to the transcript
@@ -202,8 +204,12 @@ def main() -> None:
         event = {}
     handle_event(
         name, event, DEFAULT_AGENTS_DIR,
-        notify_target=os.environ.get("ORCHESTRA_NOTIFY_TARGET"),
-        session=os.environ.get("ORCHESTRA_TMUX_SESSION"),
+        notify_target=config.notify_target(),
+        # Read raw rather than via config.tmux_session(): _maybe_notify treats
+        # an unset session as "don't notify", and substituting the default
+        # would turn a missing variable into a nudge aimed at a session that
+        # may not exist. spawn_agent always injects both together.
+        session=os.environ.get(config.TMUX_SESSION_ENV),
     )
     # Exit 0 = allow the Stop/tool to proceed normally.
     print(json.dumps({"continue": True}))

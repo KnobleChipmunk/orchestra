@@ -1,5 +1,22 @@
 # Multi-Agent Claude Coding Architecture: Desktop Orchestrating Claude Code
 
+> **Historical document. Do not follow it as install instructions.**
+>
+> This is the original design research that produced orchestra, written before
+> any code existed. It is kept because it records why the system is shaped the
+> way it is: the ~4-minute Claude Desktop tool-call timeout, the no-API-key
+> constraint, and the file-based blackboard that follows from both.
+>
+> Its code listings and file paths describe a prototype that no longer exists.
+> `/home/user/orchestrator/orchestrator_server.py` became
+> `src/orchestra/server.py`, the blackboard path is now configurable via
+> `ORCHESTRA_AGENTS_DIR`, and the Desktop-driven flow described throughout has
+> been superseded by the lead-centric one. The paths here are left as written
+> rather than rewritten, because substituting current variables into a record
+> of a superseded design would make it read as though it were runnable.
+>
+> For anything you intend to run, see **`docs/setup.md`**.
+
 ## TL;DR
 - **Phase 1 is buildable today with no API key.** A custom FastMCP server on the WSL2 side, bridged into Claude Desktop via `wsl.exe`, spawns and manages multiple worker `claude` agents in tmux panes. Desktop→worker direction is solid; worker→Desktop "unsolicited push" is BLOCKED at the protocol level, so you approximate it with a status-file blackboard the orchestrator polls via a tool. Auth runs entirely on subscription OAuth because Anthropic paused the June 15 billing change.
 - **Phase 2 (true peer-to-peer) is a WORKAROUND, not native.** Agents cannot push unsolicited messages to each other, but a shared file-based/HTTP "blackboard" MCP server that all agents poll gives you a coordinated network today. `claude mcp serve` lets one Code instance expose its built-in tools to another, but with no MCP passthrough and stdio-only 1:1 coupling it is a weak peer link.

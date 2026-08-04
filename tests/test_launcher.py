@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from orchestra import launcher
+from orchestra import config, launcher
 
 
 # --- Fakes -------------------------------------------------------------
@@ -515,3 +515,37 @@ def test_main_never_issues_kill_window_kill_session_or_kill_server(
 
     forbidden = ("kill-window", "kill-session", "kill-server")
     assert not any(any(f in part for part in c) for c in fake_run.calls for f in forbidden)
+
+
+def test_summarize_reports_the_resolved_blackboard_path(
+    fake_run, fake_urlopen, fake_sleep, prereqs_ok, capsys
+):
+    """The blackboard is created on demand, so an operator running up.py must
+    be told which directory is about to be written to — especially when it
+    came from the default rather than from something they set."""
+    fake_run.window_names = ["lead", "watchdog", "unstick"]
+    server_url, client_url = _urls()
+    fake_urlopen.set(server_url, None)
+    fake_urlopen.set(client_url, None)
+
+    launcher.main([], spawn_fn=SpawnRecorder())
+    out = capsys.readouterr().out
+
+    assert str(launcher.AGENTS_DIR) in out
+
+
+def test_summarize_says_whether_the_blackboard_path_was_configured(
+    fake_run, fake_urlopen, fake_sleep, prereqs_ok, capsys, monkeypatch
+):
+    fake_run.window_names = ["lead", "watchdog", "unstick"]
+    server_url, client_url = _urls()
+    fake_urlopen.set(server_url, None)
+    fake_urlopen.set(client_url, None)
+
+    monkeypatch.delenv(config.AGENTS_DIR_ENV, raising=False)
+    launcher.main([], spawn_fn=SpawnRecorder())
+    assert "default" in capsys.readouterr().out
+
+    monkeypatch.setenv(config.AGENTS_DIR_ENV, "/somewhere/explicit")
+    launcher.main([], spawn_fn=SpawnRecorder())
+    assert config.AGENTS_DIR_ENV in capsys.readouterr().out

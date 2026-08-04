@@ -18,8 +18,12 @@ windows) through a FastMCP stdio server and a filesystem blackboard.
   get_agent_status, list_agents, read_agent_log, stop_agent)
 - `src/orchestra/write_status.py` — Stop/PostToolUse hook handler workers run
 - `docs/` — Desktop config snippet, orchestrator prompt, smoke-test guide
-- Blackboard at `$ORCHESTRA_AGENTS_DIR` (default `/home/user/agents`):
+- Blackboard at `$ORCHESTRA_AGENTS_DIR` (default `$HOME/orchestra-agents`):
   `<name>/status.json`, `inbox.md`, `agent.log`, `task.md`
+- `src/orchestra/config.py` resolves every `ORCHESTRA_*` setting and is the
+  only place a default may be spelled. Stdlib only, so `launcher.py` and the
+  hook handlers can import it. `scripts/config.sh` is its bash counterpart
+  for the operator scripts; a test asserts the two agree.
 
 ## Status protocol (workers)
 - `BLOCKED: <reason>` → state=blocked, needs orchestrator input

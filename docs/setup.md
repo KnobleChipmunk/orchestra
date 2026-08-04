@@ -1,4 +1,4 @@
-# Setup & Operating Guide (Windows 11 + WSL2)
+# Setup & Operating Guide
 
 Lead-centric flow: the operator installs the project once, bootstraps an Opus **lead**
 agent into a tmux pane, then works entirely through that pane from then on.
@@ -6,70 +6,153 @@ The lead spawns Sonnet workers via the `claude-orchestrator` MCP tools; the oper
 never calls those tools directly. (The earlier Claude-Desktop-driven flow is
 preserved in the [Appendix](#appendix-earlier-revision--claude-desktop-driven-flow) — superseded, not deleted.)
 
-## 1. Install (WSL2)
+Orchestra was built and is run on WSL2 under Windows 11, but nothing in it is
+Windows specific. Any Linux or macOS host with tmux and the Claude Code CLI
+will do. Where a step is genuinely WSL2 only, it says so.
+
+## 1. Prerequisites and configuration
+
+### What you need installed
+
+| Requirement | Notes |
+|---|---|
+| Python 3.12 or newer | `pyproject.toml` sets `requires-python = ">=3.12"` |
+| `tmux` | Every agent, including the lead, runs in a tmux window |
+| bash 4.0 or newer | The operator scripts use associative arrays (`declare -A`). macOS ships bash 3.2; install a newer one with `brew install bash` and run the scripts and test suite under it |
+| Claude Code CLI, logged in | Subscription OAuth. See the API key note below |
+| `git` | Every agent works in its own worktree |
+
+**No API key.** Orchestra runs entirely on subscription OAuth and
+`ANTHROPIC_API_KEY` must stay **unset**. If it is set, `claude` silently bills
+the API instead of your subscription. `scripts/up.py` refuses to start when it
+finds that variable set.
+
+### Settings orchestra reads
+
+Every setting below is resolved in exactly one place, `src/orchestra/config.py`,
+with `scripts/config.sh` mirroring the shell-visible subset. All of them are
+optional: each has a working default.
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `ORCHESTRA_AGENTS_DIR` | `$HOME/orchestra-agents` | Blackboard root. Holds each agent's `status.json`, `inbox.md`, `task.md`, `agent.log`, and the agents' git worktrees |
+| `ORCHESTRA_TMUX_SESSION` | `orchestra` | tmux session holding one window per agent |
+| `ORCHESTRA_AGENT_NAME` | `peer` | Name a process reports as when it messages another agent |
+| `ORCHESTRA_NOTIFY_TARGET` | none | Agent to nudge when this agent emits a sentinel. Injected automatically by `spawn_agent`; you do not set it by hand |
+| `ORCHESTRA_NUDGE_CMD` | `scripts/agent_msg.py` | Command the watchdog invokes as `<cmd> lead <reason>` |
+| `ORCHESTRA_EVENTS_URL` | `http://localhost:4000/events` | Observability endpoint. Set it to the **empty string** to disable event emission entirely |
+| `SERVER_PORT` | `4000` | Observability events API port |
+| `CLIENT_PORT` | `5173` | Observability dashboard UI port |
+
+`SERVER_PORT` and `CLIENT_PORT` carry no `ORCHESTRA_` prefix on purpose:
+`scripts/up.py` passes them straight through to the upstream observability
+repo's `start-system.sh`, which reads those exact names.
+
+### Shorthand used in this guide
+
+The commands below refer to two paths that orchestra does **not** read from
+the environment. They are documentation shorthand so that no step depends on
+one person's home directory. Setting them changes nothing about how orchestra
+behaves; it only makes the commands here copy-pasteable.
+
+| Shorthand | What it means |
+|---|---|
+| `$ORCHESTRA_REPO` | Where you cloned this repository. The code derives this itself from its own file location |
+| `$TARGET_REPO` | The repository your agents will do work in. Often not this repo |
+
+Export the four together before you start, substituting your own paths:
 
 ```bash
-cd /home/user/projects/orchestra
+# Documentation shorthand for this guide only.
+export ORCHESTRA_REPO="$HOME/projects/orchestra"
+export TARGET_REPO="$HOME/projects/my-project"
+
+# Read by orchestra at runtime. Both shown at their defaults, so you can
+# skip these entirely unless you want something else.
+export ORCHESTRA_AGENTS_DIR="$HOME/orchestra-agents"
+export ORCHESTRA_TMUX_SESSION=orchestra
+```
+
+`.env.example` lists the runtime settings in a form you can copy to `.env`.
+Nothing in orchestra loads `.env` automatically: it is a record of your choices
+to source from your shell profile.
+
+## 2. Install
+
+```bash
+git clone https://github.com/KnobleChipmunk/orchestra "$ORCHESTRA_REPO"
+cd "$ORCHESTRA_REPO"
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest   # full suite should pass
+.venv/bin/pytest   # full suite should pass under bash 4+
 
 # Confirm subscription auth (no API key):
 unset ANTHROPIC_API_KEY
 claude /status
 ```
 
-## 2. Bootstrap the lead
+The blackboard directory is created on demand the first time an agent is
+spawned; you do not need to make it yourself.
+
+## 3. Bootstrap the lead
 
 **Fast path:** once the lead's worktree exists (one-time setup below), run
-`.venv/bin/python scripts/up.py` any time to (re)start everything — the
+`.venv/bin/python scripts/up.py` any time to (re)start everything: the
 tmux session, the observability dashboard, the lead, and the
-watchdog/unstick loops — safely: it's strictly additive to tmux and never
-touches an already-running window, so it's fine to run against a live
+watchdog/unstick loops. It is strictly additive to tmux and never
+touches an already-running window, so it is safe against a live
 session. Pass `--no-dashboard` to skip the observability UI, or `--dry-run`
 to preview what would start without touching anything. The manual steps
 below are what `up.py` does under the hood, and remain useful for
 troubleshooting or bootstrapping the lead's worktree from scratch.
 
-The lead is an agent like any other — spawned by `spawn_agent` into its own
-tmux window and git worktree — with one difference: it's the one agent whose
+The lead is an agent like any other, spawned by `spawn_agent` into its own
+tmux window and git worktree, with one difference: it is the one agent whose
 worktree carries a project-scope `.mcp.json` so its own Claude Code session
 can call the `claude-orchestrator` tools to spawn workers.
 
 ```bash
-# Lead's own worktree (repo you're orchestrating work in, e.g. a project):
-cd /home/user/myrepo
-git worktree add /home/user/agents/lead-wt -b agent-lead
+# The lead's worktree, branched off the repo you want work done in:
+cd "$TARGET_REPO"
+git worktree add "$ORCHESTRA_AGENTS_DIR/lead-wt" -b agent-lead
 ```
 
-`/home/user/agents/lead-wt/.mcp.json` — project-scope MCP config, no `wsl.exe`
-bridge needed since the lead already runs inside WSL2:
+Now write `$ORCHESTRA_AGENTS_DIR/lead-wt/.mcp.json`, the project-scope MCP
+config. No `wsl.exe` bridge is needed, since the lead already runs in the same
+environment as the server:
 
-```json
+```bash
+cat > "$ORCHESTRA_AGENTS_DIR/lead-wt/.mcp.json" <<EOF
 {
   "mcpServers": {
     "claude-orchestrator": {
-      "command": "/home/user/projects/orchestra/.venv/bin/python",
+      "command": "$ORCHESTRA_REPO/.venv/bin/python",
       "args": ["-m", "orchestra.server"]
     }
   }
 }
+EOF
 ```
 
-`spawn_agent`'s launch settings auto-approve project-scope `.mcp.json` files
-(`enableAllProjectMcpServers`) so this doesn't hit an approval dialog.
+JSON has no variable expansion, so the heredoc above bakes in the absolute
+path at write time. If you write the file by hand, substitute the real path to
+your venv's Python.
 
-Because `spawn_agent` is a plain importable Python function (not only an MCP
-tool), bootstrap the lead itself with a one-off call — there's no MCP client
+`spawn_agent`'s launch settings auto-approve project-scope `.mcp.json` files
+(`enableAllProjectMcpServers`) so this does not hit an approval dialog.
+
+Because `spawn_agent` is a plain importable Python function and not only an MCP
+tool, bootstrap the lead itself with a one-off call. There is no MCP client
 in the loop yet at this point:
 
 ```bash
-cd /home/user/projects/orchestra
+cd "$ORCHESTRA_REPO"
 PYTHONPATH=src .venv/bin/python -c "
+from orchestra import config
 from orchestra.server import spawn_agent
 print(spawn_agent(
     'lead',
     open('docs/LEAD.md').read() + '\n\nGoal: <what the operator wants done>',
-    '/home/user/agents/lead-wt',
+    str(config.agents_dir() / 'lead-wt'),
     model='opus',
 ))
 "
@@ -78,14 +161,14 @@ print(spawn_agent(
 Then attach and talk to it directly:
 
 ```bash
-tmux attach -t orchestra   # window "lead" is where the lead's pane lives
+tmux attach -t "$ORCHESTRA_TMUX_SESSION"   # window "lead" is where the lead's pane lives
 ```
 
 From here on, the operator's side of the workflow is: type goals into the lead's
 pane, read its replies. The lead decomposes, spawns workers with
 `model="sonnet"`, and reports back in the same pane.
 
-## 3. The `claude-orchestrator` MCP tools
+## 4. The `claude-orchestrator` MCP tools
 
 Used by the lead (never directly by the operator):
 
@@ -99,7 +182,7 @@ Used by the lead (never directly by the operator):
 - `send_to_agent(name, message)` — append `message` to `name`'s inbox and
   nudge its live tmux pane.
 - `get_agent_status(name)` — full `status.json` (state, blocker_reason, needs).
-- `list_agents()` — every known agent with state and last-updated time.
+- `list_agents()` — every known agent with state and last update time.
 - `read_agent_log(name, tail=40)` — last `tail` lines of an agent's pane log.
 - `stop_agent(name, force=False)` — kill an agent's tmux window and mark it
   `stopped`. Refuses if the agent's worktree has uncommitted changes unless
@@ -108,7 +191,7 @@ Used by the lead (never directly by the operator):
   persisted Claude session (`--resume <session_id>`) in a fresh tmux window,
   replaying the same launch flags `spawn_agent` used originally.
 
-## 4. Sentinel protocol
+## 5. Sentinel protocol
 
 Every agent's task prompt embeds this contract (see `docs/WORKER.md`); the
 `Stop`/`PostToolUse` hooks scan the transcript for it and write `status.json`:
@@ -126,7 +209,7 @@ Every agent's task prompt embeds this contract (see `docs/WORKER.md`); the
 The latest sentinel in the transcript wins, so an agent that was blocked and
 later unblocked reads as `done`.
 
-## 5. Inbox hygiene
+## 6. Inbox hygiene
 
 Agents read their inbox with `orchestra.inbox`, not a raw `cat`:
 
@@ -142,28 +225,44 @@ Agents read their inbox with `orchestra.inbox`, not a raw `cat`:
 This is what keeps a long-running lead or worker from re-scanning old
 messages on every "Check your inbox." nudge.
 
-## 6. Operator scripts
+## 7. Operator scripts
+
+All three resolve their defaults through `scripts/config.sh`, so they follow
+`$ORCHESTRA_AGENTS_DIR` without further configuration.
 
 - `scripts/dashboard.sh` — one-screen table of every agent on the blackboard:
   name, state, age of last update, last log line. `watch -n2 scripts/dashboard.sh`
   for a live view.
 - `scripts/watchdog.sh` — long-running stall watchdog. Run it in its own
-  **tmux window named `watchdog`**, not cron — it needs a persistent process
+  **tmux window named `watchdog`**, not cron. It needs a persistent process
   that sleeps between cycles (`scripts/watchdog.sh` runs forever; `--once`
   runs a single check) and nudges the lead's live pane, which a one-shot
-  cron invocation can't do. It warns (once per agent/condition) when a
+  cron invocation cannot do. It warns (once per agent/condition) when a
   `working` agent's status has gone stale, or a `done`/`blocked` report has
   sat unread in the lead's inbox past a threshold.
+- `scripts/reset_agents.sh` — tear down the tmux session and clear agent state.
+  Human and bootstrap use only; agents must never invoke it. Refuses to touch
+  a dirty worktree unless given `--force`.
 
-## 7. Smoke test
+## 8. Smoke test
 
-With the lead spawned and attached (§2), hand it a task that forces ≥2
-concurrent workers, one of which hits an engineered blocker:
+With the lead spawned and attached (§3), hand it a task that forces two or more
+concurrent workers, one of which hits an engineered blocker. Create the
+worktrees first:
+
+```bash
+cd "$TARGET_REPO"
+git worktree add "$ORCHESTRA_AGENTS_DIR/alpha-wt" -b agent-alpha
+git worktree add "$ORCHESTRA_AGENTS_DIR/beta-wt"  -b agent-beta
+```
+
+Then paste this into the lead's pane, substituting the two absolute worktree
+paths you just created:
 
 ```
-Using workers only: (1) agent alpha, workdir /home/user/agents/alpha-wt:
+Using workers only: (1) agent alpha, workdir <alpha-wt path>:
 add __version__ = "0.1.0" to src/orchestra/__init__.py and a test for it
-in tests/. (2) agent beta, workdir /home/user/agents/beta-wt: update the
+in tests/. (2) agent beta, workdir <beta-wt path>: update the
 EXISTING OpenAPI spec at docs/openapi.yaml to document the six orchestrator
 tools. Beta must NOT create the file: if docs/openapi.yaml does not exist,
 beta must print 'BLOCKED: docs/openapi.yaml not found, need its location or
@@ -173,30 +272,24 @@ permission to create it' and stop.
 Pass criteria: the lead spawns both workers (`spawn_agent(..., model="sonnet",
 notify_target="lead")` for each) → beta's target file doesn't exist in its
 worktree, so it emits `BLOCKED:` → `status.json` flips to `blocked` → the
-lead gets nudged, reacts via `send_to_agent`. Create the worktrees first:
+lead gets nudged, reacts via `send_to_agent`.
 
-```bash
-cd /home/user/myrepo
-git worktree add /home/user/agents/alpha-wt -b agent-alpha
-git worktree add /home/user/agents/beta-wt  -b agent-beta
-```
+## 9. Watching agents live
 
-## 8. Watching agents live
+Every agent, lead or worker, is an ordinary interactive Claude Code
+session; attaching does not disturb it.
 
-Every agent — lead or worker — is an ordinary interactive Claude Code
-session; attaching doesn't disturb it.
-
-- **One agent, full screen:** `tmux attach -t orchestra`, then `Ctrl-b n`/`p`
-  to cycle windows, `Ctrl-b d` to detach.
-- **Two agents at once:** open two WSL terminal tabs; in each, attach a
+- **One agent, full screen:** `tmux attach -t "$ORCHESTRA_TMUX_SESSION"`, then
+  `Ctrl-b n`/`p` to cycle windows, `Ctrl-b d` to detach.
+- **Two agents at once:** open two terminal tabs; in each, attach a
   grouped client showing a different window:
-  `tmux new-session -t orchestra \; select-window -t alpha` (tab 1) and
+  `tmux new-session -t "$ORCHESTRA_TMUX_SESSION" \; select-window -t alpha` (tab 1) and
   `... -t beta` (tab 2). Grouped clients can sit on different windows of the
   same session.
-- **Everything scrolling in one pane:** `tail -f /home/user/agents/*/agent.log`
+- **Everything scrolling in one pane:** `tail -f "$ORCHESTRA_AGENTS_DIR"/*/agent.log`
   (pipe-pane capture of every agent's output, interleaved).
 - **Blackboard dashboard:** `scripts/dashboard.sh` (or the raw
-  `watch -n2 'cat /home/user/agents/*/status.json'`).
+  `watch -n2 'cat "$ORCHESTRA_AGENTS_DIR"/*/status.json'`).
 
 ---
 
@@ -209,7 +302,13 @@ to Desktop instead of to a lead agent's pane. It predates the `ASK:` sentinel
 and `respawn_agent`, and Desktop's ~4-minute tool-call timeout is what
 originally forced every MCP tool to return instantly.
 
+This flow is WSL2 specific: Claude Desktop runs on the Windows side and
+reaches the server through `wsl.exe`.
+
 ### A.1 Windows side — `%APPDATA%\Claude\claude_desktop_config.json`
+
+Substitute your own checkout path for `<ORCHESTRA_REPO>`; this file is read by
+Claude Desktop and expands no shell variables.
 
 ```json
 {
@@ -218,7 +317,7 @@ originally forced every MCP tool to return instantly.
       "command": "wsl.exe",
       "args": [
         "-e", "bash", "-lc",
-        "cd /home/user/projects/orchestra && .venv/bin/python -m orchestra.server"
+        "cd <ORCHESTRA_REPO> && .venv/bin/python -m orchestra.server"
       ]
     }
   }
@@ -240,7 +339,7 @@ claude-orchestrator tools. Rules:
    doable in one step, still delegate it to a single worker.
 1. Decompose my task into 2-4 INDEPENDENT, file-disjoint subtasks.
 2. For each subtask call spawn_agent(name, task_prompt, workdir). Use
-   workdir=/home/user/agents/<name>-wt. Put the full status protocol
+   workdir=<blackboard dir>/<name>-wt. Put the full status protocol
    (below) into every task_prompt.
 3. After spawning, call list_agents and get_agent_status each turn to poll.
    Do NOT end your turn after dispatching: keep calling get_agent_status
@@ -262,19 +361,11 @@ complete, print a line starting exactly with 'DONE:' followed by a one-line
 summary, then stop."
 ```
 
-Note this predates `ASK:` — the lead-centric protocol in §4 above adds it.
+Note this predates `ASK:` — the lead-centric protocol in §5 above adds it.
 
 ### A.3 Smoke-test task (send after the prompt above)
 
-```
-Using workers only: (1) agent alpha, workdir /home/user/agents/alpha-wt:
-add __version__ = "0.1.0" to src/orchestra/__init__.py and a test for it
-in tests/. (2) agent beta, workdir /home/user/agents/beta-wt: update the
-EXISTING OpenAPI spec at docs/openapi.yaml to document the six orchestrator
-tools. Beta must NOT create the file: if docs/openapi.yaml does not exist,
-beta must print 'BLOCKED: docs/openapi.yaml not found, need its location or
-permission to create it' and stop.
-```
+Same task as §8, with the worktree paths written out in full.
 
 Beta's target file doesn't exist in its worktree, so it should emit
 `BLOCKED:` — that's the engineered blocker the orchestrator must react to.
@@ -287,9 +378,9 @@ engineered blocker (reference a file that doesn't exist in its worktree) →
 `send_to_agent`.
 
 Observe:
-- `tmux attach -t orchestra` — one window per agent (Ctrl-b n to cycle)
-- `watch -n1 cat /home/user/agents/beta/status.json` — state flip
-- `tail -f /home/user/agents/alpha/agent.log`
+- `tmux attach -t "$ORCHESTRA_TMUX_SESSION"` — one window per agent (Ctrl-b n to cycle)
+- `watch -n1 cat "$ORCHESTRA_AGENTS_DIR"/beta/status.json` — state flip
+- `tail -f "$ORCHESTRA_AGENTS_DIR"/alpha/agent.log`
 
 
 ## Appendix: operator tools and quirks (Phase E learnings)
@@ -299,7 +390,7 @@ Observe:
   works, but the TUI silently ignores a bare Enter after any pause; if your
   Enter does nothing, type a space then Enter (or just use say.py).
 - **Unstick loop**: run alongside the watchdog —
-  `tmux new-window -d -t orchestra -n unstick 'while true; do <repo>/.venv/bin/python <repo>/scripts/unstick.py lead 600; sleep 60; done'`
+  `tmux new-window -d -t "$ORCHESTRA_TMUX_SESSION" -n unstick 'while true; do "$ORCHESTRA_REPO"/.venv/bin/python "$ORCHESTRA_REPO"/scripts/unstick.py lead 600; sleep 60; done'`
   — force-submits any lead-pane draft unchanged for 10+ minutes.
 - **Multiline messages from a shell**: quote with a literal heredoc so dashes
   and apostrophes survive:

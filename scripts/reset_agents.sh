@@ -6,8 +6,9 @@
 # rule). Refuses to touch dirty worktrees unless --force is given.
 set -euo pipefail
 
-AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/user/agents}"
-SESSION="${ORCHESTRA_TMUX_SESSION:-orchestra}"
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+AGENTS_DIR="$ORCHESTRA_AGENTS_DIR"
+SESSION="$ORCHESTRA_TMUX_SESSION"
 FORCE="${1:-}"
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true

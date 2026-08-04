@@ -9,7 +9,6 @@ timeout means no tool may ever wait on an agent.
 """
 import json
 import logging
-import os
 import shlex
 import subprocess
 import sys
@@ -20,11 +19,15 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from orchestra import config
+
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger("orchestra.server")
 
-AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
-TMUX_SESSION = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
+# Snapshotted at import (not resolved per call) so tests can monkeypatch these
+# module attributes, which is how every existing test injects a tmp blackboard.
+AGENTS_DIR = config.agents_dir()
+TMUX_SESSION = config.tmux_session()
 HOOK_HANDLER = Path(__file__).resolve().parent / "write_status.py"
 EMIT_HANDLER = Path(__file__).resolve().parent / "emit_event.py"
 PYTHON = sys.executable
@@ -134,11 +137,11 @@ def _launch_claude_window(name: str, workdir: str, model: str,
 
     # Env the hook handler needs (it runs inside the worker's environment).
     env_prefix = (
-        f"ORCHESTRA_AGENTS_DIR={shlex.quote(str(AGENTS_DIR))} "
-        f"ORCHESTRA_TMUX_SESSION={shlex.quote(TMUX_SESSION)} "
+        f"{config.AGENTS_DIR_ENV}={shlex.quote(str(AGENTS_DIR))} "
+        f"{config.TMUX_SESSION_ENV}={shlex.quote(TMUX_SESSION)} "
     )
     if notify_target:
-        env_prefix += f"ORCHESTRA_NOTIFY_TARGET={shlex.quote(notify_target)} "
+        env_prefix += f"{config.NOTIFY_TARGET_ENV}={shlex.quote(notify_target)} "
 
     # Bare interactive claude: no stdin redirect and no stdout pipe — either
     # would break the interactive TUI. Task is delivered by send-keys below.

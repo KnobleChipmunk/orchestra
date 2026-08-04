@@ -8,13 +8,12 @@ Appends the full message to the target's inbox.md and nudges its tmux pane
 ORCHESTRA_AGENT_NAME if set, else "peer".
 """
 import logging
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from orchestra import messaging  # noqa: E402
+from orchestra import config, messaging  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,9 +27,9 @@ def main() -> int:
     result = messaging.deliver(
         target=target,
         message=message,
-        sender=os.environ.get("ORCHESTRA_AGENT_NAME", "peer"),
-        agents_dir=Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents")),
-        session=os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra"),
+        sender=config.agent_name(),
+        agents_dir=config.agents_dir(),
+        session=config.tmux_session(),
     )
     print(result)
     return 0

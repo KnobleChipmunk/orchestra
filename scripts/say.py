@@ -9,13 +9,12 @@ mail), say.py types your text straight into the agent's prompt with verified
 submission — use it to answer a question the agent just asked in its pane.
 """
 import logging
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from orchestra import messaging  # noqa: E402
+from orchestra import config, messaging  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,7 +23,7 @@ def main() -> int:
     if len(sys.argv) < 3:
         print("usage: say.py <agent> <text...>", file=sys.stderr)
         return 2
-    session = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
+    session = config.tmux_session()
     print(messaging.type_into(f"{session}:{sys.argv[1]}", " ".join(sys.argv[2:])))
     return 0
 
