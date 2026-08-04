@@ -92,7 +92,7 @@ WINDOWS 11 SIDE                                    │  WSL2 (Ubuntu) SIDE
                          │   spawn_agent / send_to_agent /        │
                          │   get_agent_status / list_agents /     │
                          │   read_agent_log / stop_agent          │
-                         │  State dir: /home/tusk/agents/         │
+                         │  State dir: /home/user/agents/         │
                          └───────┬───────────────┬───────────────┘
                                  │ tmux new-window / send-keys
                                  ▼               ▼
@@ -105,9 +105,9 @@ WINDOWS 11 SIDE                                    │  WSL2 (Ubuntu) SIDE
         └───────────────────────────┼─┘ └───────────────────────────┼─┘
                                     │                                │
                                     ▼                                ▼
-                         /home/tusk/agents/<name>/status.json  (blackboard)
-                         /home/tusk/agents/<name>/inbox.md
-                         /home/tusk/agents/<name>/agent.log
+                         /home/user/agents/<name>/status.json  (blackboard)
+                         /home/user/agents/<name>/inbox.md
+                         /home/user/agents/<name>/agent.log
 ```
 
 **Machine + auth annotation:**
@@ -128,7 +128,7 @@ This mirrors Anthropic's own orchestrator-worker research pattern. Per Anthropic
 ### 3.1 What wires Desktop to Code
 A **FastMCP stdio server running in WSL2**, bridged to Desktop via `wsl.exe`. It exposes management tools and never blocks: `spawn_agent` returns immediately after launching a tmux window; the orchestrator learns outcomes by polling `get_agent_status`, which reads `status.json` files. This sidesteps the Desktop timeout entirely because no tool call waits for an agent to finish.
 
-**Why tmux panes running interactive `claude` rather than `claude -p` subprocesses:** (1) interactive `claude` keeps drawing from subscription limits with zero API-key risk; (2) you can visually attach to any pane to watch or intervene; (3) panes persist so a blocked agent waits for input instead of exiting; (4) it matches Nate's existing WSL2 + tmux + worktree workflow. `claude -p` is the clearly-subordinate alternative: use it for fire-and-forget subtasks where you want a single JSON result and no human-in-the-loop (spec in 5.4 notes).
+**Why tmux panes running interactive `claude` rather than `claude -p` subprocesses:** (1) interactive `claude` keeps drawing from subscription limits with zero API-key risk; (2) you can visually attach to any pane to watch or intervene; (3) panes persist so a blocked agent waits for input instead of exiting; (4) it matches the operator's existing WSL2 + tmux + worktree workflow. `claude -p` is the clearly-subordinate alternative: use it for fire-and-forget subtasks where you want a single JSON result and no human-in-the-loop (spec in 5.4 notes).
 
 ### 3.2 How bidirectional messaging works
 - **Desktop → agent (direction 1):** `send_to_agent(name, message)` appends to `inbox.md` and issues `tmux send-keys` to type the message into that pane's live `claude` session. WORKS-TODAY.
@@ -169,13 +169,13 @@ Three layers:
 
 ### 5.1 Files to create (all inside WSL2 unless noted)
 
-**`/home/tusk/orchestrator/requirements.txt`**
+**`/home/user/orchestrator/requirements.txt`**
 ```
 fastmcp>=2.0
 ```
 (FastMCP bundles the MCP Python SDK and uvicorn; no other packages needed. `tmux` is installed via `sudo apt install tmux`, not pip.)
 
-**`/home/tusk/orchestrator/orchestrator_server.py`**
+**`/home/user/orchestrator/orchestrator_server.py`**
 ```python
 #!/usr/bin/env python3
 """Orchestrator MCP server: spawns and coordinates Claude Code worker agents
@@ -189,7 +189,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from fastmcp import FastMCP
 
-AGENTS_DIR = Path("/home/tusk/agents")
+AGENTS_DIR = Path("/home/user/agents")
 AGENTS_DIR.mkdir(parents=True, exist_ok=True)
 TMUX_SESSION = "orchestra"
 
@@ -244,7 +244,7 @@ def spawn_agent(name: str, task_prompt: str, workdir: str) -> str:
     # Seed a status write via Stop/PostToolUse hooks using --settings inline
     # JSON so the worker records blocked/done with no project-level config.
     hook_cmd = (
-        f"python3 /home/tusk/orchestrator/write_status.py {shlex.quote(name)}"
+        f"python3 /home/user/orchestrator/write_status.py {shlex.quote(name)}"
     )
     settings = json.dumps({
         "hooks": {
@@ -321,7 +321,7 @@ if __name__ == "__main__":
     mcp.run()  # stdio transport by default
 ```
 
-**`/home/tusk/orchestrator/write_status.py`** (the hook handler workers run)
+**`/home/user/orchestrator/write_status.py`** (the hook handler workers run)
 ```python
 #!/usr/bin/env python3
 """Stop/PostToolUse hook handler. Reads hook JSON on stdin, updates the agent's
@@ -333,7 +333,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-AGENTS_DIR = Path("/home/tusk/agents")
+AGENTS_DIR = Path("/home/user/agents")
 
 
 def main() -> None:
@@ -391,7 +391,7 @@ if __name__ == "__main__":
       "command": "wsl.exe",
       "args": [
         "-e", "bash", "-lc",
-        "cd /home/tusk/orchestrator && python3 orchestrator_server.py"
+        "cd /home/user/orchestrator && python3 orchestrator_server.py"
       ]
     }
   }
@@ -403,7 +403,7 @@ if __name__ == "__main__":
 In WSL2:
 ```bash
 sudo apt update && sudo apt install -y tmux
-cd /home/tusk/orchestrator
+cd /home/user/orchestrator
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 chmod +x orchestrator_server.py write_status.py
@@ -411,9 +411,9 @@ chmod +x orchestrator_server.py write_status.py
 unset ANTHROPIC_API_KEY
 claude /status        # confirm subscription auth
 # create two worktrees for file-disjoint work:
-cd /home/tusk/myrepo
-git worktree add /home/tusk/agents/alpha-wt -b agent-alpha
-git worktree add /home/tusk/agents/beta-wt  -b agent-beta
+cd /home/user/myrepo
+git worktree add /home/user/agents/alpha-wt -b agent-alpha
+git worktree add /home/user/agents/beta-wt  -b agent-beta
 ```
 > If the venv's Python is not the interpreter the config invokes, change the config's launch string to the venv Python explicitly, e.g. `.../.venv/bin/python3 orchestrator_server.py`, and use the venv python in the hook command too.
 
@@ -425,7 +425,7 @@ You are the ORCHESTRATOR. You manage Claude Code worker agents through the
 claude-orchestrator tools. Rules:
 1. Decompose my task into 2-4 INDEPENDENT, file-disjoint subtasks.
 2. For each subtask call spawn_agent(name, task_prompt, workdir). Use
-   workdir=/home/tusk/agents/<name>-wt. Put the full status protocol
+   workdir=/home/user/agents/<name>-wt. Put the full status protocol
    (below) into every task_prompt.
 3. After spawning, call list_agents and get_agent_status each turn to poll.
    NEVER assume an agent is done without polling.
@@ -443,15 +443,15 @@ task and stop."
 ```
 
 ### 5.4 Per-agent prompt templates (the orchestrator fills these)
-- **Agent alpha (will succeed):** "You are agent alpha. Objective: add a `/health` endpoint returning `{status:'ok'}`. Output format: edited source + a one-line summary. Allowed tools: Read, Write, Edit, Bash. Stay in /home/tusk/agents/alpha-wt. If blocked, print 'BLOCKED: ...' and stop."
-- **Agent beta (engineered to block):** "You are agent beta. Objective: wire the new endpoint into the OpenAPI spec at `docs/openapi.yaml`. Output format: edited spec. Allowed tools: Read, Write, Edit, Bash. Stay in /home/tusk/agents/beta-wt. If the file does not exist, print 'BLOCKED: docs/openapi.yaml not found, need its location or permission to create it' and stop." (Since that file is absent in the worktree, beta emits BLOCKED, its Stop hook writes `state:"blocked"`, and the orchestrator's next `get_agent_status` poll surfaces it — at which point Desktop reacts by `send_to_agent(beta, "create docs/openapi.yaml as a new minimal spec")`.)
+- **Agent alpha (will succeed):** "You are agent alpha. Objective: add a `/health` endpoint returning `{status:'ok'}`. Output format: edited source + a one-line summary. Allowed tools: Read, Write, Edit, Bash. Stay in /home/user/agents/alpha-wt. If blocked, print 'BLOCKED: ...' and stop."
+- **Agent beta (engineered to block):** "You are agent beta. Objective: wire the new endpoint into the OpenAPI spec at `docs/openapi.yaml`. Output format: edited spec. Allowed tools: Read, Write, Edit, Bash. Stay in /home/user/agents/beta-wt. If the file does not exist, print 'BLOCKED: docs/openapi.yaml not found, need its location or permission to create it' and stop." (Since that file is absent in the worktree, beta emits BLOCKED, its Stop hook writes `state:"blocked"`, and the orchestrator's next `get_agent_status` poll surfaces it — at which point Desktop reacts by `send_to_agent(beta, "create docs/openapi.yaml as a new minimal spec")`.)
 
 > **`claude -p` variant (subordinate option):** for a fire-and-forget subtask, replace the tmux launch with `claude -p "<prompt>" --output-format json --allowedTools "Read,Edit"` captured to a file the orchestrator reads. Use only when no human-in-the-loop is needed; you lose the watchable pane and the ability to `send_to_agent` mid-run.
 
 ### 5.5 How the user observes each step
 - **tmux panes:** `tmux attach -t orchestra` in WSL2 shows one window per agent with live `claude` output. Switch windows with `Ctrl-b n`.
-- **Log files:** `tail -f /home/tusk/agents/alpha/agent.log`.
-- **Blackboard:** `watch -n1 cat /home/tusk/agents/beta/status.json` shows the state flip to `blocked`.
+- **Log files:** `tail -f /home/user/agents/alpha/agent.log`.
+- **Blackboard:** `watch -n1 cat /home/user/agents/beta/status.json` shows the state flip to `blocked`.
 - **Desktop chat:** the orchestrator narrates each poll and its reaction to the blocker, satisfying "Desktop visibly reacts."
 
 ---
@@ -472,4 +472,4 @@ task and stop."
 - **Channels and Agent Teams are research-preview / experimental** and may change syntax or availability without notice; keep them out of anything you need to be reproducible.
 - **Windows stdio quirks:** launch the WSL server via `wsl.exe -e bash -lc "..."`; if the MSIX build of Desktop virtualizes the config path, edit the real `%APPDATA%\Claude\claude_desktop_config.json` and fully quit/relaunch. Avoid `npx`-style bare commands on the Windows side; use `wsl.exe`. Always use `%USERPROFILE%` for the Windows config path, never `$HOME`.
 - **OAuth token refresh on long runs:** `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) is a one-year token, but the underlying access tokens are short-lived and auto-refresh; very long unattended sessions can still hit refresh hiccups — another reason to prefer interactive panes you can see. Also: if `ANTHROPIC_API_KEY` is present in the environment, `-p` mode always uses it, so `unset` it to stay on subscription.
-- **Path hygiene across machines:** Windows home is `%USERPROFILE%` (user Tusk), WSL/Linux home is `/home/tusk`, Mac home is `/Users/chipmunk`. Never conflate them; the WSL server and worktrees live under `/home/tusk`, the Desktop config under `%USERPROFILE%\AppData\Roaming\Claude`.
+- **Path hygiene across machines:** Windows home is `%USERPROFILE%`, WSL/Linux home is `/home/<user>`, macOS home is `/Users/<user>`. Never conflate them; the WSL server and worktrees live under the Linux home, the Desktop config under `%USERPROFILE%\AppData\Roaming\Claude`.

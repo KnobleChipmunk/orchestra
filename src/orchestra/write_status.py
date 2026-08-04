@@ -25,7 +25,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestra.write_status")
 
-DEFAULT_AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/tusk/agents"))
+DEFAULT_AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
 TAIL_BYTES = 4000
 REASON_MAX = 300
 # On Stop, the final assistant message may not be flushed to the transcript

@@ -18,7 +18,7 @@ windows) through a FastMCP stdio server and a filesystem blackboard.
   get_agent_status, list_agents, read_agent_log, stop_agent)
 - `src/orchestra/write_status.py` — Stop/PostToolUse hook handler workers run
 - `docs/` — Desktop config snippet, orchestrator prompt, smoke-test guide
-- Blackboard at `$ORCHESTRA_AGENTS_DIR` (default `/home/tusk/agents`):
+- Blackboard at `$ORCHESTRA_AGENTS_DIR` (default `/home/user/agents`):
   `<name>/status.json`, `inbox.md`, `agent.log`, `task.md`
 
 ## Status protocol (workers)

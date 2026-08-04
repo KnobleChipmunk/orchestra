@@ -5,7 +5,7 @@ set -euo pipefail
 # Reads <name>/status.json + <name>/agent.log under $ORCHESTRA_AGENTS_DIR
 # and prints one row per agent: name, state, age of last update, last log line.
 
-AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/tusk/agents}"
+AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/user/agents}"
 
 # Extract a top-level string field from a status.json without depending on jq.
 json_field() {

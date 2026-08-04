@@ -1,6 +1,6 @@
 # orchestra
 
-A lead-centric multi-agent orchestrator: Nate talks to an Opus-tier **lead**
+A lead-centric multi-agent orchestrator: the operator talks to an Opus-tier **lead**
 agent in a tmux pane; the lead decomposes goals into independent, file-disjoint
 subtasks and spawns Sonnet **worker** agents through the `claude-orchestrator`
 FastMCP tools, one git worktree per worker, coordinating over a filesystem
@@ -15,7 +15,16 @@ blackboard.
   API key anywhere.
 - Coordination is entirely file-based: `<name>/status.json`, `inbox.md`,
   `task.md`, `agent.log` under the blackboard (`$ORCHESTRA_AGENTS_DIR`,
-  default `/home/tusk/agents`).
+  default `/home/user/agents`).
+
+## Requirements
+
+- Python 3.10+, `tmux`, `jq`
+- **bash 4.0 or newer.** The operator scripts use associative arrays
+  (`declare -A`). macOS ships bash 3.2, so on a Mac install a newer bash
+  (`brew install bash`) and run the scripts and test suite with it. Under
+  bash 3.2 the `dashboard` and `watchdog` tests fail with
+  `declare: -A: invalid option`.
 
 ## MCP tools (`claude-orchestrator`)
 

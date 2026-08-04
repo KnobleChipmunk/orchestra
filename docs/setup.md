@@ -1,15 +1,15 @@
 # Setup & Operating Guide (Windows 11 + WSL2)
 
-Lead-centric flow: Nate installs the project once, bootstraps an Opus **lead**
+Lead-centric flow: the operator installs the project once, bootstraps an Opus **lead**
 agent into a tmux pane, then works entirely through that pane from then on.
-The lead spawns Sonnet workers via the `claude-orchestrator` MCP tools; Nate
+The lead spawns Sonnet workers via the `claude-orchestrator` MCP tools; the operator
 never calls those tools directly. (The earlier Claude-Desktop-driven flow is
 preserved in the [Appendix](#appendix-earlier-revision--claude-desktop-driven-flow) — superseded, not deleted.)
 
 ## 1. Install (WSL2)
 
 ```bash
-cd /home/tusk/projects/orchestra
+cd /home/user/projects/orchestra
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest   # full suite should pass
 
@@ -37,18 +37,18 @@ can call the `claude-orchestrator` tools to spawn workers.
 
 ```bash
 # Lead's own worktree (repo you're orchestrating work in, e.g. a project):
-cd /home/tusk/myrepo
-git worktree add /home/tusk/agents/lead-wt -b agent-lead
+cd /home/user/myrepo
+git worktree add /home/user/agents/lead-wt -b agent-lead
 ```
 
-`/home/tusk/agents/lead-wt/.mcp.json` — project-scope MCP config, no `wsl.exe`
+`/home/user/agents/lead-wt/.mcp.json` — project-scope MCP config, no `wsl.exe`
 bridge needed since the lead already runs inside WSL2:
 
 ```json
 {
   "mcpServers": {
     "claude-orchestrator": {
-      "command": "/home/tusk/projects/orchestra/.venv/bin/python",
+      "command": "/home/user/projects/orchestra/.venv/bin/python",
       "args": ["-m", "orchestra.server"]
     }
   }
@@ -63,13 +63,13 @@ tool), bootstrap the lead itself with a one-off call — there's no MCP client
 in the loop yet at this point:
 
 ```bash
-cd /home/tusk/projects/orchestra
+cd /home/user/projects/orchestra
 PYTHONPATH=src .venv/bin/python -c "
 from orchestra.server import spawn_agent
 print(spawn_agent(
     'lead',
-    open('docs/LEAD.md').read() + '\n\nGoal: <what Nate wants done>',
-    '/home/tusk/agents/lead-wt',
+    open('docs/LEAD.md').read() + '\n\nGoal: <what the operator wants done>',
+    '/home/user/agents/lead-wt',
     model='opus',
 ))
 "
@@ -81,13 +81,13 @@ Then attach and talk to it directly:
 tmux attach -t orchestra   # window "lead" is where the lead's pane lives
 ```
 
-From here on, Nate's side of the workflow is: type goals into the lead's
+From here on, the operator's side of the workflow is: type goals into the lead's
 pane, read its replies. The lead decomposes, spawns workers with
 `model="sonnet"`, and reports back in the same pane.
 
 ## 3. The `claude-orchestrator` MCP tools
 
-Used by the lead (never directly by Nate):
+Used by the lead (never directly by the operator):
 
 - `spawn_agent(name, task_prompt, workdir, model="sonnet", notify_target=None)`
   — launch an agent in its own tmux window. `workdir` must be a git worktree
@@ -161,9 +161,9 @@ With the lead spawned and attached (§2), hand it a task that forces ≥2
 concurrent workers, one of which hits an engineered blocker:
 
 ```
-Using workers only: (1) agent alpha, workdir /home/tusk/agents/alpha-wt:
+Using workers only: (1) agent alpha, workdir /home/user/agents/alpha-wt:
 add __version__ = "0.1.0" to src/orchestra/__init__.py and a test for it
-in tests/. (2) agent beta, workdir /home/tusk/agents/beta-wt: update the
+in tests/. (2) agent beta, workdir /home/user/agents/beta-wt: update the
 EXISTING OpenAPI spec at docs/openapi.yaml to document the six orchestrator
 tools. Beta must NOT create the file: if docs/openapi.yaml does not exist,
 beta must print 'BLOCKED: docs/openapi.yaml not found, need its location or
@@ -176,9 +176,9 @@ worktree, so it emits `BLOCKED:` → `status.json` flips to `blocked` → the
 lead gets nudged, reacts via `send_to_agent`. Create the worktrees first:
 
 ```bash
-cd /home/tusk/myrepo
-git worktree add /home/tusk/agents/alpha-wt -b agent-alpha
-git worktree add /home/tusk/agents/beta-wt  -b agent-beta
+cd /home/user/myrepo
+git worktree add /home/user/agents/alpha-wt -b agent-alpha
+git worktree add /home/user/agents/beta-wt  -b agent-beta
 ```
 
 ## 8. Watching agents live
@@ -193,10 +193,10 @@ session; attaching doesn't disturb it.
   `tmux new-session -t orchestra \; select-window -t alpha` (tab 1) and
   `... -t beta` (tab 2). Grouped clients can sit on different windows of the
   same session.
-- **Everything scrolling in one pane:** `tail -f /home/tusk/agents/*/agent.log`
+- **Everything scrolling in one pane:** `tail -f /home/user/agents/*/agent.log`
   (pipe-pane capture of every agent's output, interleaved).
 - **Blackboard dashboard:** `scripts/dashboard.sh` (or the raw
-  `watch -n2 'cat /home/tusk/agents/*/status.json'`).
+  `watch -n2 'cat /home/user/agents/*/status.json'`).
 
 ---
 
@@ -204,7 +204,7 @@ session; attaching doesn't disturb it.
 
 **Superseded by the lead-centric flow above.** This is Phase 1's original
 design, kept here for reference: Claude Desktop (Windows) itself called the
-`claude-orchestrator` tools and decomposed/dispatched work, with Nate talking
+`claude-orchestrator` tools and decomposed/dispatched work, with the operator talking
 to Desktop instead of to a lead agent's pane. It predates the `ASK:` sentinel
 and `respawn_agent`, and Desktop's ~4-minute tool-call timeout is what
 originally forced every MCP tool to return instantly.
@@ -218,7 +218,7 @@ originally forced every MCP tool to return instantly.
       "command": "wsl.exe",
       "args": [
         "-e", "bash", "-lc",
-        "cd /home/tusk/projects/orchestra && .venv/bin/python -m orchestra.server"
+        "cd /home/user/projects/orchestra && .venv/bin/python -m orchestra.server"
       ]
     }
   }
@@ -240,7 +240,7 @@ claude-orchestrator tools. Rules:
    doable in one step, still delegate it to a single worker.
 1. Decompose my task into 2-4 INDEPENDENT, file-disjoint subtasks.
 2. For each subtask call spawn_agent(name, task_prompt, workdir). Use
-   workdir=/home/tusk/agents/<name>-wt. Put the full status protocol
+   workdir=/home/user/agents/<name>-wt. Put the full status protocol
    (below) into every task_prompt.
 3. After spawning, call list_agents and get_agent_status each turn to poll.
    Do NOT end your turn after dispatching: keep calling get_agent_status
@@ -267,9 +267,9 @@ Note this predates `ASK:` — the lead-centric protocol in §4 above adds it.
 ### A.3 Smoke-test task (send after the prompt above)
 
 ```
-Using workers only: (1) agent alpha, workdir /home/tusk/agents/alpha-wt:
+Using workers only: (1) agent alpha, workdir /home/user/agents/alpha-wt:
 add __version__ = "0.1.0" to src/orchestra/__init__.py and a test for it
-in tests/. (2) agent beta, workdir /home/tusk/agents/beta-wt: update the
+in tests/. (2) agent beta, workdir /home/user/agents/beta-wt: update the
 EXISTING OpenAPI spec at docs/openapi.yaml to document the six orchestrator
 tools. Beta must NOT create the file: if docs/openapi.yaml does not exist,
 beta must print 'BLOCKED: docs/openapi.yaml not found, need its location or
@@ -288,8 +288,8 @@ engineered blocker (reference a file that doesn't exist in its worktree) →
 
 Observe:
 - `tmux attach -t orchestra` — one window per agent (Ctrl-b n to cycle)
-- `watch -n1 cat /home/tusk/agents/beta/status.json` — state flip
-- `tail -f /home/tusk/agents/alpha/agent.log`
+- `watch -n1 cat /home/user/agents/beta/status.json` — state flip
+- `tail -f /home/user/agents/alpha/agent.log`
 
 
 ## Appendix: operator tools and quirks (Phase E learnings)
