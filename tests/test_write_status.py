@@ -180,6 +180,48 @@ def _jmsg(text: str) -> str:
                        "message": {"content": [{"type": "text", "text": text}]}})
 
 
+def _juser(text: str) -> str:
+    # Real user turn: message.content is a STRING, with origin={"kind":
+    # "human"} and promptSource="typed" — the shape of the ~2500 real
+    # human-typed entries found cross-tabulating ~/.claude/projects/*/*.jsonl.
+    # A prior version of this fixture omitted origin/promptSource, which
+    # masked a bug where origin was (wrongly) treated as a synthetic-entry
+    # marker — every real user turn was excluded and the tests still passed.
+    return json.dumps({"type": "user", "origin": {"kind": "human"}, "promptSource": "typed",
+                       "message": {"role": "user", "content": text}})
+
+
+def _jtool_result(content: str) -> str:
+    # Tool-result entries also arrive as type="user" but with content as a
+    # LIST of blocks carrying type="tool_result" — not a real user turn.
+    # Shape confirmed against a live transcript.
+    return json.dumps({"type": "user", "message": {"role": "user", "content": [
+        {"tool_use_id": "toolu_1", "type": "tool_result", "content": content}]}})
+
+
+def _jassistant_tool(name: str) -> str:
+    return json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "toolu_1", "name": name, "input": {}}]}})
+
+
+def _jmeta(text: str) -> str:
+    # Synthetic mid-turn injection (local-command-caveat / system-reminder):
+    # type="user", string content, isMeta=True. Shape confirmed against a
+    # live transcript (~/.claude/projects/*/*.jsonl) — not a real user turn.
+    return json.dumps({"type": "user", "isMeta": True,
+                       "message": {"role": "user", "content": text}})
+
+
+def _jsystem_prompt(text: str) -> str:
+    # Synthetic mid-turn injection (task-notification / cross-session
+    # message): type="user", string content, promptSource="system", an
+    # "origin" block, isMeta NOT necessarily set. Shape confirmed against a
+    # live transcript — not a real user turn.
+    return json.dumps({"type": "user", "promptSource": "system",
+                       "origin": {"kind": "task-notification"},
+                       "message": {"role": "user", "content": text}})
+
+
 def _notify_setup(monkeypatch, tmp_path: Path):
     """Fake messaging.RUN/SLEEP; route notifications to agent 'lead'."""
     from orchestra import messaging, write_status
@@ -295,10 +337,136 @@ def test_line_initial_sentinel_still_detected(tmp_path: Path, monkeypatch) -> No
 def test_stop_after_a_done_turn_without_new_sentinel_is_idle(
     tmp_path: Path, monkeypatch
 ) -> None:
-    # Live finding: the lead's post-DONE cleanup turn ended and the hook
-    # re-detected the PREVIOUS turn's DONE from transcript history, marking a
-    # busy lead done with a stale summary. Stop must reflect only the final
-    # assistant message of the current turn.
+    # Live finding (0508510): the lead's post-DONE cleanup turn ended and the
+    # hook re-detected the PREVIOUS turn's DONE from transcript history,
+    # marking a busy lead done with a stale summary. A real user entry (the
+    # nudge/keystroke that woke the new turn) separates the DONE turn from
+    # the sentinel-less cleanup turn that follows it; detection must scope to
+    # assistant text after that boundary, not to the whole transcript.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("Continue with Phase D.") + "\n"
+        + _jmsg("DONE: Phase D complete, PRs merged") + "\n"
+        + _juser("continue") + "\n"
+        + _jmsg("Workers stopped, worktrees pruned. Spawning d4 now.") + "\n"
+    )
+    handle_event("lead", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "lead" / "status.json").read_text())
+    assert status["state"] == "idle"
+
+
+def test_sentinel_followed_by_trailing_wrapup_in_same_turn_is_done(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # A worker's turn: real user prompt, then DONE:, then a further assistant
+    # text block in the SAME turn (no new user entry in between) — e.g. a
+    # wrap-up line after the sentinel. The sentinel must still be detected;
+    # this is the swallowed-sentinel bug from HANDOFF.md.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("Please finish the parser task.") + "\n"
+        + _jmsg("DONE: parser built") + "\n"
+        + _jmsg("Let me know if you need anything else.") + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "parser built"
+
+
+def test_sentinel_in_earlier_block_of_text_tool_text_turn_is_done(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # text -> tool_use -> text within one turn, sentinel in the FIRST text
+    # block. The swallowed-sentinel bug: scanning only the final text block
+    # misses this entirely.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("Wrap up and verify.") + "\n"
+        + _jmsg("DONE: openapi.yaml created") + "\n"
+        + _jassistant_tool("Bash") + "\n"
+        + _jtool_result("gate output: all green") + "\n"
+        + _jmsg("Ran the gates once more to confirm.") + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "openapi.yaml created"
+
+
+def test_meta_injection_does_not_reset_turn_boundary(tmp_path: Path, monkeypatch) -> None:
+    # Claude Code injects synthetic isMeta=True user-role entries mid-turn
+    # (local-command-caveat, system-reminder). These must not count as a
+    # fresh turn boundary or an earlier same-turn sentinel is lost.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("Please finish the parser task.") + "\n"
+        + _jmsg("DONE: parser built") + "\n"
+        + _jmeta("<system-reminder>Some housekeeping note.</system-reminder>") + "\n"
+        + _jmsg("Let me know if you need anything else.") + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "parser built"
+
+
+def test_task_notification_injection_does_not_reset_turn_boundary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Background task-notification / cross-session-message entries arrive as
+    # type="user" with promptSource="system" and no isMeta flag. These must
+    # not count as a fresh turn boundary either.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("Please finish the parser task.") + "\n"
+        + _jmsg("DONE: parser built") + "\n"
+        + _jsystem_prompt("<task-notification>background review finished</task-notification>")
+        + "\n"
+        + _jmsg("Noted the background review too.") + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "parser built"
+
+
+def test_long_trailing_text_does_not_push_sentinel_out_of_scan_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # A sentinel followed by a long same-turn wrap-up block must not be
+    # truncated away by the scan-window cap.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("Wrap up.") + "\n"
+        + _jmsg("DONE: parser built") + "\n"
+        + _jmsg("x" * 5000) + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path,
+                 notify_target="lead", session="orchestra")
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "parser built"
+
+
+def test_no_user_entries_at_all_falls_back_to_last_block_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Degenerate transcript slice with no real user entry anywhere at all
+    # (e.g. a rotated/partial file). With no turn signal to scope by,
+    # rejoining every assistant block would resurrect the exact stale-DONE
+    # bug 0508510 fixed. Fall back to the single most-recent assistant text
+    # block, matching the pre-turn-scoping protection.
     _notify_setup(monkeypatch, tmp_path)
     p = tmp_path / "t.jsonl"
     p.write_text(
@@ -307,4 +475,65 @@ def test_stop_after_a_done_turn_without_new_sentinel_is_idle(
     )
     handle_event("lead", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
     status = json.loads((tmp_path / "lead" / "status.json").read_text())
+    assert status["state"] == "idle"
+
+
+def test_real_human_turn_still_resets_boundary_despite_origin_field(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Review finding: real human-typed turns carry origin={"kind": "human"}
+    # in production transcripts (confirmed across ~2500 real entries). An
+    # earlier version of the boundary check treated ANY origin field as a
+    # synthetic-entry marker, which excluded every real user turn and made
+    # the whole turn-scoping feature silently never engage. A tool-only
+    # sentinel-less turn after a real DONE turn must read as idle, not a
+    # stale re-detected DONE.
+    _notify_setup(monkeypatch, tmp_path)
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("continue phase 1") + "\n"
+        + _jmsg("DONE: phase 1 complete") + "\n"
+        + _juser("continue") + "\n"
+        + _jassistant_tool("Bash") + "\n"
+        + _jtool_result("ok") + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "idle"
+
+
+def test_null_message_entry_does_not_crash_the_hook(tmp_path: Path) -> None:
+    # A malformed/partially-flushed JSONL line can parse as valid JSON with
+    # an explicit "message": null (dict.get(key, default) does not
+    # substitute the default when the key is present with value None).
+    # The hook must survive this, not crash before writing status.json.
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("continue phase 1") + "\n"
+        + _jmsg("DONE: phase 1 complete") + "\n"
+        + json.dumps({"type": "user", "message": None}) + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
+    assert status["state"] == "done"
+    assert status["summary"] == "phase 1 complete"
+
+
+def test_text_less_final_turn_after_boundary_does_not_fall_back_to_raw_bytes(
+    tmp_path: Path,
+) -> None:
+    # A real turn boundary is found, but the final turn is text-less (ends
+    # in a bare tool call). This must resolve to idle from the scoped ""
+    # result directly — NOT fall back to an unscoped raw byte tail, which
+    # could resurface a stale sentinel from an earlier turn.
+    p = tmp_path / "t.jsonl"
+    p.write_text(
+        _juser("continue phase 1") + "\n"
+        + _jmsg("DONE: phase 1 complete") + "\n"
+        + _juser("continue") + "\n"
+        + _jassistant_tool("Bash") + "\n"
+        + _jtool_result("ok") + "\n"
+    )
+    handle_event("w1", {"hook_event_name": "Stop", "transcript_path": str(p)}, tmp_path)
+    status = json.loads((tmp_path / "w1" / "status.json").read_text())
     assert status["state"] == "idle"
