@@ -54,33 +54,98 @@ def _sentinel_lines(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _assistant_text(raw: str, max_chars: int = TAIL_BYTES,
-                    last_only: bool = False) -> str:
-    """Concatenate text blocks of assistant messages from a JSONL transcript,
-    in order, keeping the last max_chars. last_only=True returns just the
-    FINAL assistant message — the only one that reflects the current turn's
-    outcome. Returns "" if no assistant text is found (non-JSONL input)."""
+def _is_real_user_entry(entry: dict) -> bool:
+    """True for an actual user turn (typed prompt, slash command, or a
+    keystroke-delivered nudge) — as opposed to a tool result or a synthetic
+    mid-turn injection (system-reminder, task-notification, cross-session
+    message). All of these arrive as type="user" entries; only a real turn
+    should reset the turn-boundary scan.
+
+    Tool results carry a list of blocks with type="tool_result". Synthetic
+    injections carry isMeta=True (system-reminder, local-command-caveat) or
+    promptSource="system" (task-notification, cross-session message). A real
+    user turn — human-typed (promptSource="typed", origin={"kind":"human"}),
+    SDK-issued, or a slash-command's own entries — carries neither marker.
+    NOTE: origin is NOT a synthetic-entry signal by itself — real human
+    turns carry origin={"kind":"human"} too; checking it was an earlier bug
+    caught in review (it made the turn-boundary scan never fire on real
+    transcripts). Shapes confirmed by cross-tabulating promptSource/origin/
+    isMeta over ~2500 real user entries across ~/.claude/projects/*/*.jsonl.
+    """
+    if entry.get("type") != "user":
+        return False
+    if entry.get("isMeta") or entry.get("promptSource") == "system":
+        return False
+    # entry.get("message", {}) only substitutes the default for a MISSING
+    # key — a malformed/partially-flushed line with an explicit "message":
+    # null still returns None here, so `or {}` is required, not optional.
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        return bool(content) and not any(
+            isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+    return False
+
+
+def _texts_from(entries: list[dict]) -> list[str]:
     texts: list[str] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for entry in entries:
         if entry.get("type") != "assistant":
             continue
-        content = entry.get("message", {}).get("content", [])
+        content = (entry.get("message") or {}).get("content", [])
         if isinstance(content, str):
             texts.append(content)
         elif isinstance(content, list):
             texts.extend(b.get("text", "") for b in content
                          if isinstance(b, dict) and b.get("type") == "text")
-    texts = [t for t in texts if t]
-    if last_only:
+    return [t for t in texts if t]
+
+
+def _parse_jsonl_entries(raw: str) -> list[dict]:
+    entries: list[dict] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+def _assistant_text(raw: str, max_chars: int = TAIL_BYTES,
+                    final_turn_only: bool = False) -> str:
+    """Concatenate text blocks of assistant messages from a JSONL transcript,
+    in order. final_turn_only=True scopes to the FINAL TURN — every
+    assistant text block after the last real user entry — so a sentinel
+    followed by trailing text, or a text->tool->text turn shape, is still
+    detected, while sentinels from prior turns stay excluded. The turn scan
+    is unbounded (no max_chars cap): capping it risked truncating an early
+    same-turn sentinel out of the window when later text in the turn was
+    long. If the transcript has no real user entry at all (no turn signal),
+    falls back to only the single most-recent assistant text block, capped
+    to max_chars — matching the old whole-transcript last-block behavior —
+    so unrelated turns are never silently rejoined into one scan.
+    Returns "" if no assistant text is found (non-JSONL input, or a
+    legitimately text-less final turn)."""
+    entries = _parse_jsonl_entries(raw)
+
+    if not final_turn_only:
+        return "\n".join(_texts_from(entries))[-max_chars:]
+
+    start = None
+    for i in range(len(entries) - 1, -1, -1):
+        if _is_real_user_entry(entries[i]):
+            start = i + 1
+            break
+
+    if start is None:
+        texts = _texts_from(entries)
         return texts[-1][-max_chars:] if texts else ""
-    return "\n".join(texts)[-max_chars:]
+
+    return "\n".join(_texts_from(entries[start:]))
 
 
 SENTINELS = ("DONE:", "BLOCKED:", "ASK:")
@@ -136,11 +201,20 @@ def handle_event(name: str, event: dict, agents_dir: Path,
             return ""
         raw = Path(transcript).read_text()
         # Real transcripts are JSONL where one trailing tool-result line can
-        # exceed any raw byte tail. Scan ONLY the final assistant message:
-        # earlier turns' sentinels are history, not this turn's outcome
-        # (a prior DONE: was re-detected after a sentinel-less cleanup turn).
-        # Fall back to a raw tail for non-JSONL content.
-        return _assistant_text(raw, last_only=True) or raw[-TAIL_BYTES:]
+        # exceed any raw byte tail. Scan every assistant text block of the
+        # FINAL TURN (everything after the last real user entry): earlier
+        # turns' sentinels are history, not this turn's outcome (a prior
+        # DONE: was re-detected after a sentinel-less cleanup turn), but a
+        # sentinel followed by trailing text in the same turn must still be
+        # found. The raw byte-tail fallback is ONLY for genuinely non-JSONL
+        # content: falling back to it whenever the scoped scan is merely ""
+        # would un-scope a valid transcript (e.g. a turn that legitimately
+        # ends in a bare tool call with no text) and could resurface a stale
+        # sentinel from an earlier turn via raw byte slicing — the exact bug
+        # class this function exists to prevent.
+        if not _parse_jsonl_entries(raw):
+            return raw[-TAIL_BYTES:]
+        return _assistant_text(raw, final_turn_only=True)
 
     tail = read_tail()
     if hook == "Stop":
