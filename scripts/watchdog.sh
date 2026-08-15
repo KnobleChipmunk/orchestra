@@ -12,14 +12,14 @@ set -euo pipefail
 #   scripts/watchdog.sh          # run forever: check, sleep 60s, repeat
 #   scripts/watchdog.sh --once   # run exactly one check cycle and exit
 #
-# Env:
-#   ORCHESTRA_AGENTS_DIR  blackboard root (default /home/user/agents)
+# Env (defaults resolved in scripts/config.sh):
+#   ORCHESTRA_AGENTS_DIR  blackboard root
 #   ORCHESTRA_NUDGE_CMD   command to invoke for nudges, called as
 #                         "$ORCHESTRA_NUDGE_CMD lead <reason>"
-#                         (default scripts/agent_msg.py)
 
-AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/user/agents}"
-NUDGE_CMD="${ORCHESTRA_NUDGE_CMD:-scripts/agent_msg.py}"
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+AGENTS_DIR="$ORCHESTRA_AGENTS_DIR"
+NUDGE_CMD="$ORCHESTRA_NUDGE_CMD"
 STALE_WORKING_S=600
 STALE_REPORT_S=300
 CYCLE_INTERVAL_S=60

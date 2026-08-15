@@ -23,6 +23,8 @@ from typing import Callable, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
+from orchestra import config
+
 State = Literal["UP", "STARTED", "SKIPPED", "FAILED"]
 
 
@@ -34,13 +36,13 @@ class Result:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# Mirrors server.py's AGENTS_DIR convention exactly, duplicated (not
-# imported) to keep this module stdlib-only at import time.
-AGENTS_DIR = Path(os.environ.get("ORCHESTRA_AGENTS_DIR", "/home/user/agents"))
-TMUX_SESSION = os.environ.get("ORCHESTRA_TMUX_SESSION", "orchestra")
+# orchestra.config is stdlib-only by contract, so importing it here does not
+# break this module's fastmcp-free-at-import-time rule.
+AGENTS_DIR = config.agents_dir()
+TMUX_SESSION = config.tmux_session()
 OBS_REPO = Path.home() / "projects" / "multi-agent-observability"
-SERVER_PORT = int(os.environ.get("SERVER_PORT", "4000"))
-CLIENT_PORT = int(os.environ.get("CLIENT_PORT", "5173"))
+SERVER_PORT = config.server_port()
+CLIENT_PORT = config.client_port()
 LEAD_WT = AGENTS_DIR / "lead-wt"
 LEAD_MD = REPO_ROOT / "docs" / "LEAD.md"
 
@@ -204,10 +206,10 @@ def ensure_lead(dry_run: bool, spawn_fn: SpawnFn | None = None) -> Result:
     if not LEAD_WT.is_dir():
         return Result("lead", "FAILED",
             f"{LEAD_WT} does not exist — bootstrap it: cd <your project repo> && "
-            f"git worktree add {LEAD_WT} -b agent-lead (see docs/setup.md §2)")
+            f"git worktree add {LEAD_WT} -b agent-lead (see docs/setup.md §3)")
     if not (LEAD_WT / ".mcp.json").exists():
         return Result("lead", "FAILED",
-            f"{LEAD_WT}/.mcp.json is missing — see docs/setup.md §2 to create it")
+            f"{LEAD_WT}/.mcp.json is missing — see docs/setup.md §3 to create it")
     if not LEAD_MD.exists():
         return Result("lead", "FAILED", f"{LEAD_MD} not found — cannot build the lead's prompt")
 
@@ -243,9 +245,16 @@ def summarize(results: list[Result]) -> int:
         lines.append(f"{r.name:<{name_w}} {r.state:<{state_w}}  {r.detail}")
     print("\n".join(lines))
     print()
-    print(f"Dashboard: http://localhost:{CLIENT_PORT}  "
+    # The blackboard is created on demand, so name the directory that is about
+    # to be written to and say where the path came from. An operator who never
+    # set anything should not have to read source to find out where their
+    # agents' state landed.
+    origin = (f"from ${config.AGENTS_DIR_ENV}"
+              if os.environ.get(config.AGENTS_DIR_ENV) else "default")
+    print(f"Blackboard: {AGENTS_DIR}  ({origin})")
+    print(f"Dashboard:  http://localhost:{CLIENT_PORT}  "
           f"(events API: http://localhost:{SERVER_PORT}/events/recent)")
-    print(f"Attach:    tmux attach -t {TMUX_SESSION}")
+    print(f"Attach:     tmux attach -t {TMUX_SESSION}")
 
     return 1 if any(r.state == "FAILED" for r in results) else 0
 

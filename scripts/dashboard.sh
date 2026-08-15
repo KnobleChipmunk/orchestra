@@ -3,9 +3,11 @@ set -euo pipefail
 
 # One-screen overview of every agent on the Orchestra blackboard.
 # Reads <name>/status.json + <name>/agent.log under $ORCHESTRA_AGENTS_DIR
-# and prints one row per agent: name, state, age of last update, last log line.
+# (default resolved in scripts/config.sh) and prints one row per agent:
+# name, state, age of last update, last log line.
 
-AGENTS_DIR="${ORCHESTRA_AGENTS_DIR:-/home/user/agents}"
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+AGENTS_DIR="$ORCHESTRA_AGENTS_DIR"
 
 # Extract a top-level string field from a status.json without depending on jq.
 json_field() {

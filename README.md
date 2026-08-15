@@ -15,11 +15,11 @@ blackboard.
   API key anywhere.
 - Coordination is entirely file-based: `<name>/status.json`, `inbox.md`,
   `task.md`, `agent.log` under the blackboard (`$ORCHESTRA_AGENTS_DIR`,
-  default `/home/user/agents`).
+  default `$HOME/orchestra-agents`).
 
 ## Requirements
 
-- Python 3.10+, `tmux`, `jq`
+- Python 3.12+, `tmux`, `jq`
 - **bash 4.0 or newer.** The operator scripts use associative arrays
   (`declare -A`). macOS ships bash 3.2, so on a Mac install a newer bash
   (`brew install bash`) and run the scripts and test suite with it. Under

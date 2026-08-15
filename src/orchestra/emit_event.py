@@ -22,9 +22,9 @@ import sys
 import time
 from urllib.request import Request, urlopen
 
+from orchestra import config
+
 SOURCE_APP = "orchestra"
-EVENTS_URL_ENV = "ORCHESTRA_EVENTS_URL"
-DEFAULT_URL = "http://localhost:4000/events"
 # Handoff ceiling. localhost round-trips are <5ms and a not-running dashboard
 # refuses instantly; this only bounds a silently black-holed host. Drop to 0.5
 # if per-hook latency under a network fault ever matters.
@@ -40,13 +40,10 @@ def resolve_url() -> str | None:
     """Endpoint URL, or None if emission is disabled.
 
     Env unset -> default endpoint. Env set to "" -> disabled (explicit opt-out).
+    Resolved per call (not cached) so a hook process always sees the
+    environment it was actually launched with.
     """
-    val = os.environ.get(EVENTS_URL_ENV)
-    if val is None:
-        return DEFAULT_URL
-    if val == "":
-        return None
-    return val
+    return config.events_url()
 
 
 def build_event(name: str, event: dict) -> dict:

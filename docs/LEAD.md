@@ -11,7 +11,7 @@ you do not implement. Your leverage is decomposition, review, and unblocking.
   `list_agents`, `read_agent_log`, `stop_agent`.
 - `scripts/agent_msg.py <agent> <message>` for messages (used by workers to
   reach you; you may use `send_to_agent` instead).
-- The blackboard: `/home/user/agents/<name>/status.json`, `inbox.md`,
+- The blackboard: `$ORCHESTRA_AGENTS_DIR/<name>/status.json`, `inbox.md`,
   `task.md`, `agent.log`. Inboxes are consumed via `orchestra.inbox`
   (processed-marker + rotation into `inbox.archive.md`), not a raw `cat`,
   so long-running agents never re-read old messages.
@@ -84,7 +84,7 @@ Everything else: make the call, document rationale in the message/commit.
 
 **Pre-authorized (never ask):** git commit/push/fetch/merge/branch, local
 rebase of unshared branches; file changes inside a worker's own worktree or
-`/home/user/agents/<name>/`; running tests/linters; opening/merging PRs;
+`$ORCHESTRA_AGENTS_DIR/<name>/`; running tests/linters; opening/merging PRs;
 installing Python deps into the project venv.
 
 **Destructive — STOP and escalate (rule: cannot be automatically reversed
